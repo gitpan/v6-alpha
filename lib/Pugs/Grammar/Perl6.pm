@@ -113,7 +113,7 @@ sub perl6_expression {
 
 
 *for = Pugs::Compiler::Regex->compile( q(
-    (for|while) : <?ws>? 
+    (for|while|until) : <?ws>? 
     $<exp1> := <perl6_expression('no_blocks',0)> <?ws>?
     $<exp2> := <block>        
         { return { 
@@ -208,7 +208,7 @@ sub perl6_expression {
                 attribute  => $_[0]{attribute}->(),
                 
                 named_only => $_[0][0]->(),
-                splat      => $_[0][1]->(),
+                is_slurpy  => $_[0][1]->(),
                 optional   => $_[0][2]->(),
             } }
     #|
@@ -264,13 +264,15 @@ sub perl6_expression {
 )->code;
 
 *sub_decl_name = Pugs::Compiler::Regex->compile( q(
+    ( my | <''> ) <?ws>?
     ( multi | <''> ) <?ws>?
     ( submethod | method | sub ) <?ws>? 
     ( <?Pugs::Grammar::Term.ident>? ) 
         { return { 
-            multi      => $_[0][0]->(),
-            statement  => $_[0][1]->(),
-            name       => $_[0][2]->(),
+            my         => $_[0][0]->(),
+            multi      => $_[0][1]->(),
+            statement  => $_[0][2]->(),
+            name       => $_[0][3]->(),
         } }
     |
     ( multi ) <?ws>?
@@ -305,6 +307,7 @@ sub perl6_expression {
         <block>        
         { return { 
             multi      => $_[0]{sub_decl_name}->()->{multi},
+            my         => $_[0]{sub_decl_name}->()->{my},
             statement  => $_[0]{sub_decl_name}->()->{statement},
             name       => $_[0]{sub_decl_name}->()->{name},
             
@@ -392,6 +395,11 @@ sub perl6_expression {
 
 
 *statement = Pugs::Compiler::Regex->compile( q(
+    use <?ws> v5 <?ws>?; ((.)*?) ; <?ws>? use <?ws> v6 (.)*? ; 
+        { return { 
+            perl5source => $_[0][0]->() 
+        } }
+    |
     <begin_block>
         { return $_[0]{begin_block}->();
         }
@@ -422,7 +430,7 @@ sub perl6_expression {
     |
     <perl6_expression> 
         [
-            <?ws>? (if|unless|for) <?ws>?
+            <?ws>? (if|unless|for|while|until) <?ws>?
             $<exp1> := <perl6_expression> 
             { return {
                 statement => $_[0][0]->(),

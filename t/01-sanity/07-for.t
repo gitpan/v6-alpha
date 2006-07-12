@@ -1,7 +1,7 @@
-
 use v6-alpha;
 
-say "1..6";  
+
+say "1..6";
 
 my @array = <a b c>;
 

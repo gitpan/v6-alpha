@@ -1,5 +1,5 @@
 package v6;
-$v6::VERSION = '0.006';
+$v6::VERSION = '0.007';
 
 # Documentation in the __END__
 use 5.006;
@@ -34,18 +34,22 @@ sub pmc_compile {
     my $perl5 = $p6->{perl5};
 
     # Don't write when we failed to compile, otherwise it never recompiles!
-    die unless length $perl5;
+    die unless defined $perl5 
+            && length  $perl5;
 
     # $perl5 =~ s/do\{(.*)\}/$1/s;
     my ($package, $file) = caller(4);
     $perl5 = 
-        ( $package ? "package $package;\n" : "# no package name\n" ).
+        ( $package 
+            ? "package $package;\n" 
+            : "package main; # no package name\n" ).
         ((!$package or ($package eq 'main')) ? (
             "use Config;\n".
             "use lib split(/\\Q\$Config{path_sep}/, \$ENV{PERL6LIB} || '');\n"
         ) : '').
         "use Scalar::Util;\n" .
         "use Pugs::Runtime::Perl6;\n" . 
+        "use Pugs::Runtime::Perl6Prelude;\n" . 
         "use strict;\n" . 
         "no warnings 'void';\n" .   # t/07-try.t, t/07-ref.t
         $perl5 . "\n" .
@@ -78,6 +82,12 @@ if (@ARGV and !caller) {
     shift(@ARGV) if $ARGV[0] =~ /^--pugs/;
     shift(@ARGV) if $ARGV[0] =~ /^-Bperl5$/i;
     splice(@ARGV, 0, 2) if $ARGV[0] =~ /^-B$/;
+
+    while (@ARGV and $ARGV[0] =~ /^-(\w)(.+)/) {
+        use Config;
+        $ENV{PERL6LIB} = "$2$Config{path_sep}$ENV{PERL6LIB}" if $1 eq 'I';
+        shift @ARGV;
+    }
 
     if (@ARGV and $ARGV[0] =~ s/^-e//) {
         $code = (length($ARGV[0]) ? $ARGV[0] : $ARGV[1]);
@@ -158,7 +168,7 @@ This is a valid header:
 This is an invalid header:
 
     #!/usr/bin/pugs
-    use v6;
+    use v6-alpha;
 
 * it tells perl5 to execute C</usr/bin/pugs>.
 

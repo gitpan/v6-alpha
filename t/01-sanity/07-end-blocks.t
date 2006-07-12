@@ -1,6 +1,5 @@
-#! perl6
-
 use v6-alpha;
+
 
 say "1..2";
 

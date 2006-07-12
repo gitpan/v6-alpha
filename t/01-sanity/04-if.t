@@ -1,8 +1,7 @@
-# #!/usr/bin/pugs
+use v6-alpha;
 
 # Checking that testing is sane: if
 
-use v6-alpha;
 
 say '1..2';
 

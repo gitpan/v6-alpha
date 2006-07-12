@@ -10,8 +10,9 @@ use base 'Pugs::Compiler::Regex';
 use Pugs::Grammar::Perl6;
 use Pugs::Emitter::Perl6::Perl5;
 use Carp;
-
+# use Scalar::Util 'blessed';
 use Data::Dumper;
+use Pugs::Grammar::BaseCategory;  # <ws>
 
 sub compile {
     my ( $class, $rule_source, $param ) = @_;
@@ -25,24 +26,57 @@ sub compile {
         for keys %$param;
     #print 'rule source: ', $self->{source}, "\n";
     local $@;
-    eval {
-        $self->{ast} = Pugs::Grammar::Perl6->parse( $self->{source} );
-    };
-    carp "Error in perl 6 parser: $@\nSource:\n'" .
-         substr( $rule_source, 0, 30 ) . "...\n" 
-        if $@;
+
+    # in order to reduce the memory footprint:
+    #       loop parsing '<ws> <statement>'; 
+    #       keep the grammar tree and discard the match
+    # AST = { statements => \@statement }
+
+    my $tail = $self->{source};
+    my @statement;
+
+    while (1) {
+
+        eval {
+            do {
+                my $match = Pugs::Grammar::BaseCategory->ws( $tail );
+                $tail = $match->{tail} if $match->{bool};
+            } until ! ($tail =~ s/^;//);
+            $self->{ast} = Pugs::Grammar::Perl6->statement( $tail );
+        };
+
+        if ( $@ ) {
+            carp "Error in perl 6 parser: $@\nSource:\n'" .
+                 substr( $rule_source, 0, 30 ) . "...\n";
+            last;
+        }
+
+        push @statement, $self->{ast}();
+        $tail = ${$self->{ast}}->{tail};
+        last unless $tail;
+        #print 'rule ast: ', Dumper( $self->{ast}() );
+        #print "next statement: $tail \n";
+
+    }
+
     carp "Error in perl 6 parser:\nSource:\n'" .
          substr( $rule_source, 0, 30 ) . "...\nat:\n'" .
-         substr( $self->{ast}{tail}, 0, 30 ) . "...\n" 
-        if $self->{ast}{tail};
-    #print 'rule ast: ', do{use Data::Dumper; Dumper( $self->{ast}() )};
+         substr( $tail, 0, 30 ) . "...\n" 
+        if $tail;
 
-    eval {
-        $self->{perl5} = Pugs::Emitter::Perl6::Perl5::emit( 
-            $self->{grammar}, $self->{ast}(), $self );
-    };
-    carp "Error in perl 5 emitter: $@\nSource:\n$self->{perl5}\n" if $@;
-    #print 'rule perl5: ', do{use Data::Dumper; Dumper($self->{perl5})};
+    $self->{ast} = { statements => \@statement };
+
+    if ( @statement ) {
+        eval {
+            $self->{perl5} = Pugs::Emitter::Perl6::Perl5::emit( 
+                $self->{grammar}, $self->{ast}, $self );
+        };
+        {
+            no warnings 'uninitialized';
+            carp "Error in perl 5 emitter: $@\nSource:\n$self->{perl5}\n" if $@;
+        }
+        #print 'rule perl5: ', do{use Data::Dumper; Dumper($self->{perl5})};
+    }
     bless $self, $class;
 }
 
@@ -50,16 +84,6 @@ sub compile {
 
 __END__
 
-    $self->{code} = eval 
-        $self->{perl5};
-    carp "Error in perl 5 evaluation: $@\nSource:\n$self->{perl5}\n" if $@;
-
-    bless $self, $class;
-}
-
-1;
-
-__END__
 
 =head1 NAME 
 

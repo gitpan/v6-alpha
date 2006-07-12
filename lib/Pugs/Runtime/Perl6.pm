@@ -6,13 +6,48 @@ use warnings;
 
 use Data::Dumper;
 use Data::Bind;
+use Sub::Multi;
 
 # TODO - see Pugs::Runtime::Grammar for metaclass stuff
+
+use constant Inf => 100**100**100;
+use constant NaN => Inf - Inf;
 
 sub perl {
     local $Data::Dumper::Terse = 1;
     return join( ', ', Data::Dumper::Dumper( @_ ) );
 }
+
+sub eval {
+    my ($string, $lang);
+    Data::Bind->arg_bind(\@_);
+    $lang ||= 'perl6';
+    my $eval_string;
+    Data::Bind::bind_op2(\$eval_string, \$string);
+    if ($lang eq 'perl6') {
+	require Pugs::Compiler::Perl6;
+	my $p6 = Pugs::Compiler::Perl6->compile( $string );
+	Data::Bind::bind_op2(\$eval_string, \$p6->{perl5});
+    }
+    elsif ($lang ne 'perl5') {
+	die;
+    }
+
+    local $@;
+    no warnings;
+    my @result;
+    if (wantarray) {
+	@result = eval $eval_string;
+    }
+    else {
+	$result[0] = eval $eval_string;
+    }
+    $::_EXCL__ = $@;
+    return wantarray ? @result : $result[0];
+
+}
+
+Data::Bind->sub_signature(\&eval, { var => '$string' }, { var => '$lang', optional => 1});
 
 package Pugs::Runtime::Perl6::Routine;
 use B ();
@@ -23,6 +58,10 @@ sub new {
     bless { cv => B::svref_2object($cv) }, $class;
 }
 
+sub code {
+    $_[0]->{cv}->object_2svref;
+}
+
 sub name {
     my $self = shift;
     my $cv = $self->{cv};
@@ -31,6 +70,12 @@ sub name {
 
 sub package {
     $_[0]->{cv}->GV->STASH->NAME;
+}
+
+sub arity {
+    my $cv = Data::Bind::_get_cv($_[0]->code);
+    use Data::Dumper;
+    return *$cv->{sig} ? *$cv->{sig}->arity : 0;
 }
 
 package Pugs::Runtime::Perl6::Scalar;

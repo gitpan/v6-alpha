@@ -38,6 +38,13 @@ BEGIN {
         other => '*',
     );
 
+    __PACKAGE__->add_rule(
+        name => '**',
+        assoc => 'left',
+        precedence => 'tighter',
+        other => 'infix:<*>',
+    );
+    
     __PACKAGE__->add_rule( 
         name => '+',
         assoc => 'left',
@@ -62,6 +69,24 @@ BEGIN {
         assoc => 'left',
         precedence => 'looser',
         other => '+',
+    );
+    __PACKAGE__->add_rule( 
+        name => 'cmp',
+        assoc => 'left',
+        precedence => 'equal',
+        other => '..',
+    );
+    __PACKAGE__->add_rule( 
+        name => 'does',
+        assoc => 'left',
+        precedence => 'equal',
+        other => '..',
+    );
+    __PACKAGE__->add_rule( 
+        name => 'but',
+        assoc => 'left',
+        precedence => 'equal',
+        other => '..',
     );
     
     __PACKAGE__->add_rule( 
@@ -177,6 +202,12 @@ BEGIN {
     );
     __PACKAGE__->add_rule( 
         name => ':=',
+        assoc => 'right',
+        precedence => 'equal',
+        other => '=',
+    );
+    __PACKAGE__->add_rule( 
+        name => '=>',
         assoc => 'right',
         precedence => 'equal',
         other => '=',

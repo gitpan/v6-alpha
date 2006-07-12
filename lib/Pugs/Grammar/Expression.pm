@@ -24,6 +24,8 @@ my $rx_end_with_blocks = qr/
                           | if \s 
                           | unless \s
                           | for \s 
+                          | while \s
+                          | until \s
                           | $
                         )
             /xs;
@@ -36,6 +38,8 @@ my $rx_end_no_blocks = qr/
                           | if \s 
                           | unless \s
                           | for \s 
+                          | while \s
+                          | until \s
                           | -> 
                           | $
                         )  
@@ -94,6 +98,12 @@ sub ast {
             
                 # after whitespace means '<' (default)
                 # without whitespace means '<str>'
+
+                # <fglock> I'm trying to parse '(1 | 3)<3'
+                # <TimToady> that's a syntax error.
+                # <TimToady> you must have a space before infix:{'<'}
+                # <TimToady> otherwise it will always be taken as the postfix.
+
                 #print "checking angle quote ... [$whitespace_before]\n";
                 $m = Pugs::Grammar::Term->angle_quoted( substr($match, 1), { p => 1 } );
                 if ( $m ) {
@@ -275,7 +285,7 @@ sub ast {
         yylex => $lex, 
         yyerror => sub { 
             local $Carp::CarpLevel = 2;
-            carp "parsing error in Expression: ..." . substr($match,0,30) . "... "; 
+            croak "parsing error in Expression: ..." . substr($match,0,30) . "... "; 
         },
     );
 

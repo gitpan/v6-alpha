@@ -4,18 +4,19 @@ distribution_type: module
 generated_by: Module::Install version 0.63
 license: perl
 name: v6-alpha
-no_index: 
-  directory: 
+no_index:
+  directory:
     - inc
     - t
-recommends: 
+recommends:
   Perl::Tidy: 0
-requires: 
-  Data::Bind: 0.25
+requires:
+  Data::Bind: 0.27
   Devel::Caller: 0.10
   Module::Compile: 0.17
   Moose: 0.10
-  Pugs::Compiler::Rule: 0.06
+  Pugs::Compiler::Rule: 0.10
   Scalar::Util: 0
+  Sub::Multi: 0
   perl: 5.6.0
-version: 0.006
+version: 0.007
