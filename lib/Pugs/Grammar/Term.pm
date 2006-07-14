@@ -13,32 +13,6 @@ use Pugs::Compiler::Token;
 
 our %hash;
 
-sub pair {
-    my $class = shift;
-    return $class->no_match unless $_[0];
-    #print "match pair $_[0]\n";
-    return Pugs::Runtime::Match->new( { 
-        bool  => 1,
-        match => $1,
-        tail  => $3,
-        capture => { 
-            pair => { key => { single_quoted => $1 }, value => defined $2 ? { single_quoted => $2 } : { int => 1 } }
-        },
-    } )
-        if $_[0] =~ /^:([_\w]+)(?:<(.*?)>)?(.*)$/s;
-    # :$foo
-    return Pugs::Runtime::Match->new( { 
-        bool  => 1,
-        match => $1,
-        tail  => $2,
-        capture => { 
-            pair => { key => { single_quoted => $1 }, value => { scalar => '$'.$1 } }
-        },
-    } )
-        if $_[0] =~ /^:\$([_\w]+)(.*)$/s;
-    return $class->no_match;
-};
-
 sub cpan_bareword {
     my $class = shift;
     return $class->no_match unless $_[0];
@@ -73,6 +47,26 @@ sub substitution {
         match   => $extracted,
         tail    => $remainder,
         capture => { options => $options, substitution => [$extracted, $extracted2] },
+    } );
+};
+
+sub rx {
+    my $grammar = shift;
+    return $grammar->no_match unless $_[0];
+    my $options;
+    while ($_[0] =~ s/^:(\w+)//) {
+	$options->{lc($1)} = 1;
+    }
+    return $grammar->no_match unless substr($_[0], 0 , 1) eq '/';
+    substr($_[0], 0, 1, '');
+    my ($extracted,$remainder) = Text::Balanced::extract_delimited( "/" . $_[0], "/" );
+    return $grammar->no_match unless length($extracted) > 0;
+    $extracted = substr( $extracted, 1, -1 );
+    return Pugs::Runtime::Match->new( { 
+        bool    => 1,,
+        match   => $extracted,
+        tail    => $remainder,
+        capture => { options => $options, rx => $extracted },
     } );
 };
 
@@ -133,6 +127,14 @@ sub angle_quoted {
     |   \/      # $/
 ) )->code;
 
+*bare_ident = Pugs::Compiler::Regex->compile( q(
+        [
+            [ \:\: ]?
+            [ _ | <?alpha> ]
+            [ _ | <?alnum> ]*
+        ]+
+) )->code;
+
 *parenthesis = Pugs::Compiler::Regex->compile( q(
                 <?ws>? <Pugs::Grammar::Perl6.perl6_expression> <?ws>? 
                 <'\)'>
@@ -161,6 +163,34 @@ sub angle_quoted {
                 } }
 ) )->code;
 
+*brackets = Pugs::Compiler::Regex->compile( q(
+                <?ws>? <Pugs::Grammar::Perl6.perl6_expression> <?ws>? 
+                <']'>
+                { return {
+                    op1 => { op => "[" },
+                    op2 => { op => "]" },
+                    fixity => "circumfix",
+                    exp1 => $_[0]{'Pugs::Grammar::Perl6.perl6_expression'}->() 
+                } }
+            |
+                <?ws>? <Pugs::Grammar::Perl6.block> <?ws>? 
+                <']'>
+                { return {
+                    op1 => { op => "[" },
+                    op2 => { op => "]" },
+                    fixity => "circumfix",
+                    exp1 => $_[0]{'Pugs::Grammar::Perl6.block'}->() 
+                } }
+            |
+                <?ws>? 
+                <']'>
+                { return {
+                    op1 => { op => "[" },
+                    op2 => { op => "]" },
+                    fixity => "circumfix",
+                } }
+) )->code;
+
 sub recompile {
     my $class = shift;
     %hash = (
@@ -173,6 +203,10 @@ sub recompile {
                 { return { scalar => '$.' . $_[0]->() ,} }
             ) ),
         '@' => Pugs::Compiler::Regex->compile( q(
+                # XXX t/subroutines/multidimensional_arglists.t
+                \; <?Pugs::Grammar::Term.ident>
+                { return { die => "not implemented" } }
+            |
                 <?Pugs::Grammar::Term.ident>
                 { return { array => "\@" . $_[0]->() ,} }
             ) ),
@@ -188,6 +222,10 @@ sub recompile {
         '(' => Pugs::Compiler::Regex->compile( q(
                 <Pugs::Grammar::Term.parenthesis>
                 { return $_[0]{'Pugs::Grammar::Term.parenthesis'}->() }
+            ) ),
+        '[' => Pugs::Compiler::Regex->compile( q(
+                <Pugs::Grammar::Term.brackets>
+                { return $_[0]{'Pugs::Grammar::Term.brackets'}->() }
             ) ),
         '{' => Pugs::Compiler::Regex->compile( q(
                 <?ws>? <Pugs::Grammar::Perl6.statements_or_null> <?ws>? <'}'>
@@ -242,15 +280,21 @@ sub recompile {
                 } 
             }
         ) ),
-        # angle is handled by the lexer
-        #q(<) => Pugs::Compiler::Regex->compile( q(
-        #    <Pugs::Grammar::Term.angle_quoted>
-        #    { return { angle_quoted => $/{'Pugs::Grammar::Term.angle_quoted'}->() ,} }
-        #) ),
-        #~ q(.) => Pugs::Compiler::Regex->compile( q(
-            #~ <Pugs::Grammar::Term.bareword>
-            #~ { return { method => $/{'Pugs::Grammar::Term.bareword'}->() ,} }
-        #~ ) ),
+        q(rx) => Pugs::Compiler::Regex->compile( q(
+            <Pugs::Grammar::Term.rx>
+            { return { 
+                    rx => $/{'Pugs::Grammar::Term.rx'}->(),
+                } 
+            }
+        ) ),
+        q(<) => Pugs::Compiler::Regex->compile( q(
+            <Pugs::Grammar::Term.angle_quoted>
+            { return { 
+                    angle_quoted => $/{'Pugs::Grammar::Term.angle_quoted'}->(),
+                } 
+            }
+        ) ),
+        # q(.) => ...
         q() => Pugs::Compiler::Regex->compile( q!
                 ### floating point
                 \d+\.\d+ { return { num => $() ,} } 
@@ -258,25 +302,59 @@ sub recompile {
                 ### number
                 \d+ { return { int => $() ,} } 
             |
-                ### long:<name> 
-                <Pugs::Grammar::Term.pair>
-                { return $/{'Pugs::Grammar::Term.pair'}->() }
-            #~ |
-                #~ ### func(... func.(...
-                #~ <Pugs::Grammar::Term.sub_call> 
-                #~ { return $/{'Pugs::Grammar::Term.sub_call'}->() }
+                ### pair - long:<name> 
+                \:
+                [
+                # :foo<bar>
+                ((_|\w)+) \< ((.)*?) \>
+                { return {
+                    pair => { 
+                        key   => { single_quoted => $/[0]() }, 
+                        value => { single_quoted => $/[1]() }, 
+                } } }
+                |
+                # :foo(exp)
+                ((_|\w)+) \(  
+                    <?ws>? <Pugs::Grammar::Perl6.perl6_expression> <?ws>? 
+                \)
+                { return {
+                    pair => { 
+                        key   => { single_quoted => $/[0]() }, 
+                        value => $/{'Pugs::Grammar::Perl6.perl6_expression'}->(), 
+                } } }
+                |
+                # :$foo 
+                \$ ((_|\w)+)
+                { return {
+                    pair => { 
+                        key   => { single_quoted => $/[0]() }, 
+                        value => { scalar  => '$' . $/[0]() }, 
+                } } }
+                |
+                # :foo 
+                ((_|\w)+)
+                { return {
+                    pair => { 
+                        key   => { single_quoted => $/[0]() }, 
+                        value => { num => 1 }, 
+                } } }
+                ]            
+
+            |
+                ### perl5:Test::More
+                perl5 \: <Pugs::Grammar::Term.bare_ident> 
+                { return { 
+                        bareword => $/{'Pugs::Grammar::Term.bare_ident'}->(),
+                        lang => 'perl5',
+                } }
             |
                 ### Test-0.0.6
                 <Pugs::Grammar::Term.cpan_bareword> 
                 { return $/{'Pugs::Grammar::Term.cpan_bareword'}->() }
             |
                 ### Test::More
-                <Pugs::Grammar::Term.ident> 
-                { return { bareword => $/{'Pugs::Grammar::Term.ident'}->() } }
-            #|
-            #    ### v6
-            #    <Pugs::Grammar::Term.bareword> 
-            #    { return $/{'Pugs::Grammar::Term.bareword'}->() }
+                <Pugs::Grammar::Term.bare_ident> 
+                { return { bareword => $/{'Pugs::Grammar::Term.bare_ident'}->() } }
         ! ),
     );
     $class->SUPER::recompile;

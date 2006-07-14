@@ -19,6 +19,8 @@ sub add_rule {
         assoc => 'non',
     );
     $self->Pugs::Grammar::Operator::add_rule( %opt,
+        precedence => 'equal',
+        other  => $opt{name},
         fixity => 'prefix', 
         assoc => 'non',
         name => 'prefix:<' . $opt{name} . '>',
@@ -58,6 +60,18 @@ BEGIN {
         other => 'prefix:<+>',
     );
     __PACKAGE__->add_rule(
+        name => '@',
+        assoc => 'left',
+        precedence => 'equal',
+        other => 'prefix:<+>',
+    );
+    __PACKAGE__->add_rule(
+        name => '&',
+        assoc => 'left',
+        precedence => 'equal',
+        other => 'prefix:<+>',
+    );
+    __PACKAGE__->add_rule(
         name => '!',
         assoc => 'left',
         precedence => 'equal',
@@ -75,15 +89,6 @@ BEGIN {
         precedence => 'equal',
         other => 'prefix:<+>',
     );
-    
-    # XXX - BUG - collision with &name
-    
-    #~ __PACKAGE__->add_rule(
-        #~ name => '&',
-        #~ assoc => 'left',
-        #~ precedence => 'equal',
-        #~ other => 'prefix:<+>',
-    #~ );
     
     #__PACKAGE__->add_rule(
     #    name => 'say',

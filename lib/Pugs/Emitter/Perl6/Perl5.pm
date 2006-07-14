@@ -90,6 +90,14 @@ sub _emit_code {
     return "Pugs::Runtime::Perl6::Routine->new(\\$code)";
 }
 
+sub _emit_double_quoted {
+    my $n = $_[0];
+    my @strings = (split /(\$\*\w+)/, $n);
+    return '""' unless @strings;
+    return join('.', map { $_ =~ /^\$\*/ ? Pugs::Runtime::Common::mangle_var($_) : '"'.$_.'"' }
+                     grep { length $_ } @strings);
+}
+
 sub _emit {
     my $n = $_[0];
     #die "_emit: ", Dumper( $n ); 
@@ -104,7 +112,7 @@ sub _emit {
 
 
     return join ( ";\n", 
-            map { _emit( $_ ) } @{$n->{statements}} 
+            map { defined $_ ? _emit( $_ ) : "" } @{$n->{statements}} 
         ) ||
         " # empty block\n"
         if exists $n->{statements};
@@ -137,7 +145,7 @@ sub _emit {
     return Pugs::Runtime::Common::mangle_var( $n->{hash} )
         if exists $n->{hash};
         
-    return '"' . $n->{double_quoted} . '"' 
+    return _emit_double_quoted($n->{double_quoted})
         if exists $n->{double_quoted};
             
     return '\'' . $n->{single_quoted} . '\'' 
@@ -151,6 +159,9 @@ sub _emit {
         
     return assoc_list( $n )
         if exists $n->{assoc}  && $n->{assoc}  eq 'list';
+        
+    return assoc_chain( $n )
+        if exists $n->{assoc}  && $n->{assoc}  eq 'chain';
         
     if ( exists $n->{fixity} ) {
         return infix( $n )
@@ -190,6 +201,29 @@ sub assoc_list {
     return _not_implemented( $n->{op1}, "list-op" );
 }
 
+sub assoc_chain {
+    my $n = $_[0];
+    my @chain = @{$n->{chain}};
+    #print "chain emit_rule: ", Dumper( @chain );
+
+    if ( @chain == 3 ) {
+        my $exp1 = _emit( $chain[0] );
+        my $op   = $chain[1];
+        my $exp2 = _emit( $chain[2] );
+        return "$exp1 $op $exp2"
+    }
+    my @e;
+    for ( my $i = 0; $i < @chain; $i += 2 ) {
+        push @e,  "(" . _emit( $chain[$i] ) . ")";
+    }
+    my $s = "do { my \@_tmp = (" . join(",", @e) . "); ";
+    @e = ();
+    for ( my $i = 1; $i < @chain; $i += 2 ) {
+        push @e, "\$_tmp[" . int($i/2) . "] $chain[$i] \$_tmp[" . (int($i/2)+1) . "]";
+    }
+    return $s . join(" && ", @e) . " }";
+}
+
 sub _emit_parameter_signature {
     my $n = $_[0] or return '';
     return '' unless @$n;
@@ -209,6 +243,7 @@ sub _emit_data_bind_param_spec {
     # XXX: translate other attributes
     $param{var} = delete $param{name};
     $param{var} = delete $param{code} if $param{code};
+    $param{optional} = 1 if delete $param{default};
     my $dumped = Dumper(\%param);
     $dumped =~ s/^\$VAR1 = //g;
     $dumped =~ s/;$//;
@@ -231,11 +266,24 @@ sub _emit_parameter_binding {
     #    'attribute' => \@attr   $v is rw
 
     my @params = @$n or return '';
+    my $defaults = '';
     my $param = join( ',' , 
-        map { _emit( {%$_, scalar => $_->{name}} ) } grep { !exists $_->{type} || $_->{type} ne 'Code' } @params
+        map { _emit( {%$_, scalar => $_->{name}} ) } grep { substr($_->{name}, 0, 1) ne '&' } @params
     );
+    for (grep { $_->{default} } @params) {
+	my $var = $_->{default}{code} ? '\\'. $_->{default}{code} : _emit( $_->{default} );
+	if ( substr($_->{name}, 0, 1) eq '&' ) {
+	    my $name = substr($_->{name}, 1);
+	    my $var = $_->{default}{code} ? '\\'. $_->{default}{code} : _emit( $_->{default} );
+	    $defaults .= "local *$name = $var unless *$name;\n"; # XXX: WRONG
+	}
+	else {
+	    my $name = _emit( {%$_, scalar => $_->{name}} );
+	    $defaults .= "$name = $var unless defined $name;\n";
+	}
+    }
     return((length($param) ? "  my ($param);\n" : '').
-           "  Data::Bind->arg_bind(\\\@_);\n");
+           "  Data::Bind->arg_bind(\\\@_);\n  $defaults;\n");
 }
 
 sub _emit_parameter_capture {
@@ -324,6 +372,7 @@ sub default {
 
         if ( $n->{sub}{bareword} eq 'grammar'  ||
              $n->{sub}{bareword} eq 'class'    ||
+             $n->{sub}{bareword} eq 'package'  ||
              $n->{sub}{bareword} eq 'module'   ) {
             # Moose: package xxx; use Moose;
             # class Point;
@@ -366,6 +415,10 @@ sub default {
             return "super";  # param list?
         }
         
+        if ( $n->{sub}{bareword} eq 'undef' ) {
+            return ' undef ';
+        }
+
         if ( $n->{sub}{bareword} eq 'use' ) {
             # use v6-alpha
             if ( exists $n->{param}{cpan_bareword} ) {
@@ -380,8 +433,19 @@ sub default {
             if ( $n->{param}{sub}{bareword} eq 'v6' ) {
                 return " # use v6\n";
             }
+            # use perl5:module::name 'param'
+            if ( $n->{param}{sub}{lang} &&
+                 $n->{param}{sub}{lang} eq 'perl5' ) {
+                return 
+                    "{ " .
+                    # restore PERL5LIB - see 'perldoc lib'
+                    'local @INC = @lib::ORIG_INC; ' . 
+                    "use " . _emit( $n->{param}{sub} ) . ' ' . 
+                        (exists $n->{param}{param} ? _emit($n->{param}{param}) : '' ) .
+                    "; } ";
+            }
             # use module::name 'param'
-            return "use " . _emit( $n->{param}{sub} ) .
+            return "use " . _emit( $n->{param}{sub} ) . ' ' . 
                    (exists $n->{param}{param} ? _emit($n->{param}{param}) : '' );
         }
 
@@ -414,8 +478,8 @@ sub default {
         return " " . $n->{sub}{bareword} . " '', " . _emit( $n->{param} ) 
             if $n->{sub}{bareword} eq 'print' ||
                $n->{sub}{bareword} eq 'warn';
-        return " print '', " . _emit( $n->{param} ) . ";\n" .
-            " print " . '"\n"'
+        return " do { print '', " . _emit( $n->{param} ) . ";\n" .
+            " print " . '"\n" } '
             if $n->{sub}{bareword} eq 'say';
 
         # TODO - other builtins
@@ -433,12 +497,17 @@ sub default {
 
 	# XXX: builtins
 	my $subname = $n->{sub}{bareword};
-	if ($subname eq 'defined' || $subname eq 'substr' || $subname eq 'split' || $subname eq 'die' || $subname eq 'return' || $subname eq 'push' || $subname eq 'shift') {
-	    return ' ' . Pugs::Runtime::Common::mangle_ident( $n->{sub}{bareword} ) . '(' . _emit( $n->{param} ) . ')';
+	if ($subname eq 'defined' || $subname eq 'substr' || $subname eq 'split' || $subname eq 'die' || $subname eq 'return' || $subname eq 'push' || $subname eq 'shift' || $subname eq 'join' || $subname eq 'index' || $subname eq 'undef' || $subname eq 'rand' || $subname eq 'int') {
+	    return $subname . '(' . _emit( $n->{param} ) . ')';
+	}
+
+	# XXX: !(0) is not correctly parsed. workaround here.
+	if ($subname eq '!' || $subname eq 'not') {
+	    return $subname.' '._emit($n->{param});
 	}
 	# runtime thunked builtins
 	if ($subname eq 'eval') {
-	    return 'Pugs::Runtime::Perl6::eval('. _emit_parameter_capture( $n->{param} ) . ');';
+	    return 'Pugs::Runtime::Perl6::eval('. _emit_parameter_capture( $n->{param} ) . ')';
 	}
 
         return ' ' . Pugs::Runtime::Common::mangle_ident( $n->{sub}{bareword} ) . '(' . _emit_parameter_capture( $n->{param} ) . ')';
@@ -520,6 +589,13 @@ sub default {
                 " )";
         }
         
+        if ( exists $n->{self}{hash} ) {
+            # %hash.keys
+            return " (" . 
+                _emit( $n->{method} ) . ' ' .
+                _emit( $n->{self}   ) . ')';
+        }
+        
         if ( exists $n->{self}{op1} ) {
             # %var<item>.++;
             return
@@ -554,11 +630,12 @@ sub statement {
     
     if ( $n->{statement} eq 'if'     || 
          $n->{statement} eq 'unless' ) {
+	$n->{exp2} = { bare_block => $n->{exp2} } if $n->{exp2} && !$n->{exp2}{bare_block};
+	$n->{exp3} = { bare_block => $n->{exp3} } if $n->{exp3} && !$n->{exp3}{bare_block};
         return  " " . $n->{statement} . 
                 '(' . _emit( $n->{exp1} ) . ')' .
-                " {\n" . _emit( $n->{exp2} ) . "\n }\n" .
-                " else" .
-                " {\n" . _emit( $n->{exp3} ) . "\n }";
+                _emit( $n->{exp2} ) . "\n" .
+		( $n->{exp3} ? " else" . _emit( $n->{exp3} ) : '' );
     }
 
     if ( $n->{statement} eq 'sub'       ||
@@ -747,8 +824,8 @@ sub infix {
             $n->{op1}{op} . ' ' . "sub " . _emit( $n->{exp2} );
     }
 
-    return _emit( $n->{exp1} ) . ' ' . 
-        $n->{op1}{op} . ' ' . _emit( $n->{exp2} );
+    return '(' . _emit( $n->{exp1} ) . ' ' . 
+        $n->{op1}{op} . ' ' . _emit( $n->{exp2} ) . ')';
 }
 
 sub circumfix {
@@ -762,6 +839,13 @@ sub circumfix {
         return '(' . _emit( $n->{exp1} ) . ')';
     }
     
+    if ( $n->{op1}{op} eq '[' &&
+         $n->{op2}{op} eq ']' ) {
+        return '[]'
+            unless defined  $n->{exp1};
+        return '[' . _emit( $n->{exp1} ) . ']';
+    }
+
     return _not_implemented( $n, "circumfix" );
 }
 
@@ -800,6 +884,13 @@ sub postcircumfix {
         return _emit( $n->{exp1} ) . '[' . _emit( $n->{exp2} ) . ']';
     }
     
+    if ( $n->{op1}{op} eq '<' &&
+         $n->{op2}{op} eq '>' ) {
+        my $name = _emit( $n->{exp1} );
+        $name =~ s/^\%/\$/;
+        return $name . '{ \'' . $n->{exp2}{angle_quoted} . '\' }';
+    }
+
     return _not_implemented( $n, "postcircumfix" );
 }
 
@@ -864,6 +955,7 @@ sub prefix {
             Pugs::Runtime::Common::mangle_var( '$!' ) . " = \$@; \@__ret }";
     }
     if ( $n->{op1}{op} eq '~' ) {
+        return ' "'._emit( $n->{exp1}).'"' if $n->{exp1}{array};
         return ' "" . ' . _emit( $n->{exp1} );
     }
     if ( $n->{op1}{op} eq '!' ) {
@@ -886,12 +978,6 @@ sub postfix {
     if ( $n->{op1}{op} eq '++' ||
          $n->{op1}{op} eq '--' ) {
         return _emit( $n->{exp1} ) . $n->{op1}{op};
-    }
-
-    if ( $n->{op1}{op} eq 'ANGLE' ) {
-        my $name = _emit( $n->{exp1} );
-        $name =~ s/^\%/\$/;
-        return $name . '{ \'' . $n->{op1}{angle_quoted} . '\' }';
     }
 
     return _not_implemented( $n, "postfix" );

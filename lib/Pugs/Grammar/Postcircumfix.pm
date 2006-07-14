@@ -15,6 +15,8 @@ sub add_rule {
         assoc => 'non',
     );
     $self->Pugs::Grammar::Operator::add_rule( %opt,
+        precedence => 'equal',
+        other  => $opt{name},
         fixity => 'postcircumfix', 
         assoc => 'non',
         name => 'postcircumfix:<' . $opt{name} . ' ' . $opt{name2} . '>',
@@ -39,13 +41,13 @@ BEGIN {
     #    precedence => 'equal',
     #    other => 'circumfix:<( )>',
     #);
-    __PACKAGE__->add_rule( 
-        name => '[',
-        name2 => ']',
-        assoc => 'left',
-        precedence => 'tighter',
-        other => 'prefix:<++>',
-    );
+    #__PACKAGE__->add_rule( 
+    #    name => '[',
+    #    name2 => ']',
+    #    assoc => 'left',
+    #    precedence => 'tighter',
+    #    other => 'prefix:<++>',
+    #);
     #__PACKAGE__->add_rule( 
     #    name => '{',
     #    name2 => '}',

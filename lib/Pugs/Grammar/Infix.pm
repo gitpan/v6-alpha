@@ -15,8 +15,10 @@ sub add_rule {
         fixity => 'infix', 
     );
     Pugs::Grammar::Operator::add_rule( $self, %opt,
+        precedence => 'equal',
+        other  => $opt{name},
         fixity => 'infix', 
-        name => 'infix:<' . $opt{name} . '>',
+        name   => 'infix:<' . $opt{name} . '>',
     );
     $self->SUPER::add_rule( 
         $opt{name}, 
@@ -107,25 +109,25 @@ BEGIN {
 
     __PACKAGE__->add_rule( 
         name => 'eq',
-        assoc => 'left',
+        assoc => 'chain',
         precedence => 'looser',
         other => 'infix:<|>',
     );
     __PACKAGE__->add_rule( 
         name => 'ne',
-        assoc => 'left',
+        assoc => 'chain',
         precedence => 'equal',
         other => 'eq',
     );
     __PACKAGE__->add_rule( 
         name => '==',
-        assoc => 'left',
+        assoc => 'chain',
         precedence => 'equal',
         other => 'eq',
     );
     __PACKAGE__->add_rule( 
         name => '!=',
-        assoc => 'left',
+        assoc => 'chain',
         precedence => 'equal',
         other => 'eq',
     );
@@ -143,25 +145,31 @@ BEGIN {
     );
     __PACKAGE__->add_rule( 
         name => '<',
-        assoc => 'left',
+        assoc => 'chain',
         precedence => 'equal',
         other => 'eq',
     );
     __PACKAGE__->add_rule( 
         name => '>',
-        assoc => 'left',
+        assoc => 'chain',
         precedence => 'equal',
         other => 'eq',
     );
     
     __PACKAGE__->add_rule( 
         name => '<=',
-        assoc => 'left',
+        assoc => 'chain',
         precedence => 'equal',
         other => 'eq',
     );
     __PACKAGE__->add_rule( 
         name => '>=',
+        assoc => 'chain',
+        precedence => 'equal',
+        other => 'eq',
+    );
+    __PACKAGE__->add_rule( 
+        name => '~~',
         assoc => 'left',
         precedence => 'equal',
         other => 'eq',
@@ -171,13 +179,6 @@ BEGIN {
         name => '&&',
         assoc => 'right',
         precedence => 'looser',
-        other => 'eq',
-    );
-
-    __PACKAGE__->add_rule( 
-        name => '~~',
-        assoc => 'left',
-        precedence => 'equal',
         other => 'eq',
     );
     
@@ -260,8 +261,14 @@ BEGIN {
     __PACKAGE__->add_rule( 
         name => 'err',
         assoc => 'left',
-        precedence => 'looser',
-        other => 'and',
+        precedence => 'equal',
+        other => 'or',
+    );
+    __PACKAGE__->add_rule( 
+        name => 'xor',
+        assoc => 'left',
+        precedence => 'equal',
+        other => 'or',
     );
     
     #__PACKAGE__->add_rule( 
