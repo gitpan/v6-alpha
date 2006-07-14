@@ -1,7 +1,11 @@
+0.009  2006-07-14
+
+- reduce operators: say [*] 1..5
+
 0.008  2006-07-14
 
 - 'use perl5:CGI'
-- parses chain operators
+- chain operators
 - fixed precedence table
 
 0.007  2006-07-12
