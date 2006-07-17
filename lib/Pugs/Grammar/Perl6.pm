@@ -34,6 +34,17 @@ sub perl6_expression {
     } )
 };
 
+*perl6_expression_or_null = Pugs::Compiler::Regex->compile( q(
+    <perl6_expression('no_blocks',0)> 
+        { return $_[0]{perl6_expression}->() }
+    |
+        { return {
+            null => 1,
+        } }
+),
+    { grammar => __PACKAGE__ }
+)->code;
+
 *block = Pugs::Compiler::Regex->compile( q(
     \{ : <?ws>? <statements_or_null> <?ws>? \}
         { return { 
@@ -125,6 +136,31 @@ sub perl6_expression {
     { grammar => __PACKAGE__ }
 )->code;
 
+*loop = Pugs::Compiler::Regex->compile( q(
+    (loop) : <?ws>?
+        [
+          <'('> $<exp1> := <perl6_expression_or_null> <?ws>? <';'>
+                $<exp2> := <perl6_expression_or_null> <?ws>? <';'>
+                $<exp3> := <perl6_expression_or_null> <?ws>? <')'> 
+                <?ws>? $<content> := <block>
+          { return { statement => $_[0][0]->(),
+                     exp1      => $_[0]{exp1}->(),
+                     exp2      => $_[0]{exp2}->(),
+                     exp3      => $_[0]{exp3}->(),
+                     content   => $_[0]{content}->() }
+          }
+        |
+          <block> <?ws>?
+          (while) : <?ws>? <perl6_expression('no_blocks',0)>
+          { return { statement => $_[0][0]->(),
+                     exp2      => $_[0]{perl6_expression}->(),
+                     postfix   => 1,
+                     content   => $_[0]{block}->() }
+          }
+       ]
+),
+    { grammar => __PACKAGE__ }
+)->code;
 
 *try = Pugs::Compiler::Regex->compile( q(
     (try) : <?ws>? <block>        
@@ -418,16 +454,16 @@ sub perl6_expression {
         { return $_[0]{sub_decl}->();
         }
     |
-    <block>
-        { return $_[0]{block}->();
-        }
-    |
     <if>
         { return $_[0]{if}->();
         }
     |
     <for>
         { return $_[0]{for}->();
+        }
+    |
+    <loop>
+        { return $_[0]{loop}->();
         }
     |
     <try>   # this actually don't belong here
@@ -447,6 +483,10 @@ sub perl6_expression {
             { return $_[0]{perl6_expression}->();
             } 
         ]
+    |
+    <block>
+        { return $_[0]{block}->();
+        }
 
 ),
     { grammar => __PACKAGE__ }

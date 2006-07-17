@@ -1,5 +1,5 @@
 package v6;
-$v6::VERSION = '0.009';
+$v6::VERSION = '0.010';
 
 # Documentation in the __END__
 use 5.006;
@@ -51,7 +51,8 @@ sub pmc_compile {
         "use Pugs::Runtime::Perl6;\n" . 
         "use Pugs::Runtime::Perl6Prelude;\n" . 
         "use strict;\n" . 
-        "no warnings 'void';\n" .   # t/07-try.t, t/07-ref.t
+        "no warnings ('void', 'uninitialized');\n" .   # t/07-try.t, t/07-ref.t
+        # "Pugs::Runtime::Perl6Prelude->import();\n" .   # XXX - is import() needed?
         $perl5 . "\n" .
         "; 1;\n";
 
@@ -168,7 +169,7 @@ This is a valid header:
 This is an invalid header:
 
     #!/usr/bin/pugs
-    use v6-alpha;
+    use v6;
 
 * it tells perl5 to execute C</usr/bin/pugs>.
 

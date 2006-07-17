@@ -111,12 +111,12 @@ sub _emit {
         unless ref( $n ) eq 'HASH';
 
 
-    return join ( ";\n", 
+    if (exists $n->{statements}) {
+	my $statements = join ( ";\n", 
             map { defined $_ ? _emit( $_ ) : "" } @{$n->{statements}} 
-        ) ||
-        " # empty block\n"
-        if exists $n->{statements};
-    
+        );
+	return length $statements ? $statements : " # empty block\n";
+    }
 
     return Pugs::Runtime::Common::mangle_ident( $n->{bareword} )
         if exists $n->{bareword};
@@ -495,9 +495,6 @@ sub default {
             " print " . '"\n" } '
             if $n->{sub}{bareword} eq 'say';
 
-        # TODO - other builtins
-        return " (defined " . _emit( $n->{param} ) . ")"
-            if $n->{sub}{bareword} eq 'defined';
             
         # XXX: handle args
         return "Pugs::Runtime::Perl6::Routine->new(Devel::Caller::caller_cv(1))"
@@ -508,9 +505,16 @@ sub default {
             if $n->{sub}{bareword} eq 'fail';
             
 
-	# XXX: builtins
-	my $subname = $n->{sub}{bareword};
-	if ($subname eq 'defined' || $subname eq 'substr' || $subname eq 'split' || $subname eq 'die' || $subname eq 'return' || $subname eq 'push' || $subname eq 'shift' || $subname eq 'join' || $subname eq 'index' || $subname eq 'undef' || $subname eq 'rand' || $subname eq 'int') {
+        # TODO - other builtins
+        my $subname = $n->{sub}{bareword};
+        if ($subname eq 'defined') {
+            my $param = _emit( $n->{param} );
+            # when testing defined-ness of $!, it is testing the emptiness of $@ in perl5.
+            return " length(\$@) " if $param eq '$::_V6_ERR_';
+            return " (defined $param )";
+        }
+
+	if ($subname eq 'substr' || $subname eq 'split' || $subname eq 'die' || $subname eq 'return' || $subname eq 'push' || $subname eq 'shift' || $subname eq 'join' || $subname eq 'index' || $subname eq 'undef' || $subname eq 'rand' || $subname eq 'int') {
 	    return $subname . '(' . _emit( $n->{param} ) . ')';
 	}
 
@@ -609,16 +613,24 @@ sub default {
                 _emit( $n->{self}   ) . ')';
         }
         
+	if (exists $n->{self}{array} ||
+            (exists $n->{self}{exp1}{assoc} && $n->{self}{exp1}{assoc} eq 'list')) {
+	    if ($n->{method}{dot_bareword} eq 'map') {
+		my $param = $n->{param}{fixity} eq 'circumfix' ? $n->{param}{exp1} : undef;
+		my $code = $param->{bare_block} ? 'sub { '._emit($param).' }' : _emit($param);
+		return 'Pugs::Runtime::Perl6::Array::map([\('.$code.', '. _emit($n->{self}).')], {})';
+	    }
+	    else {
+		return _emit( $n->{method} ).' '.(map { _emit($_) } $n->{self}, $n->{params});
+	    }
+	}
+
         if ( exists $n->{self}{op1} ) {
             # %var<item>.++;
             return
                 _emit( $n->{self} ) . "->" . 
                 _emit( $n->{method} ) . "(" . _emit( $n->{param} ) . ")";
         }
-        
-	if (exists $n->{self}{array}) {
-	    return _emit( $n->{method} ).' '._emit($n->{self});
-	}
     
         # normal methods or subs
         
@@ -717,6 +729,15 @@ sub statement {
         return  " " . $n->{statement} . 
                 ' ( ' . _emit( $n->{exp1} ) . ' )' . 
                 _emit( $n->{exp2} );
+    }
+
+    if ( $n->{statement} eq 'loop' ) {
+	if ($n->{postfix}) {
+	    # YES, remember the do {{ }} thingy?
+	    return " do {"._emit($n->{content})."} while ("._emit($n->{exp2}).")";
+	}
+        return  " for( ". join(';', map { $_->{null} ? ' ' : _emit($_) } @{$n}{qw/exp1 exp2 exp3/}).
+            ")\n"._emit($n->{content});
     }
 
     if ( $n->{statement} eq 'rule'  ||
@@ -902,6 +923,14 @@ sub postcircumfix {
         my $name = _emit( $n->{exp1} );
         $name =~ s/^\%/\$/;
         return $name . '{ \'' . $n->{exp2}{angle_quoted} . '\' }';
+    }
+
+    if ( $n->{op1}{op} eq '{' &&
+         $n->{op2}{op} eq '}' ) {
+        my $name = _emit( $n->{exp1} );
+	die unless $name =~ m/^\%/;
+        $name =~ s/^\%/\$/;
+        return $name . '{ \'' . _emit($n->{exp2}) . '\' }';
     }
 
     return _not_implemented( $n, "postcircumfix" );

@@ -14,7 +14,8 @@ use constant Inf => 100**100**100;
 use constant NaN => Inf - Inf;
 
 sub perl {
-    local $Data::Dumper::Terse = 1;
+    local $Data::Dumper::Terse    = 1;
+    local $Data::Dumper::Sortkeys = 1;
     return join( ', ', Data::Dumper::Dumper( @_ ) );
 }
 
@@ -25,29 +26,47 @@ sub eval {
     my $eval_string;
     Data::Bind::bind_op2(\$eval_string, \$string);
     if ($lang eq 'perl6') {
-	require Pugs::Compiler::Perl6;
-	my $p6 = Pugs::Compiler::Perl6->compile( $string );
-	Data::Bind::bind_op2(\$eval_string, \$p6->{perl5});
+        require Pugs::Compiler::Perl6;
+        my $p6 = Pugs::Compiler::Perl6->compile( $string );
+        Data::Bind::bind_op2(\$eval_string, \$p6->{perl5});
     }
     elsif ($lang ne 'perl5') {
-	die;
+        die;
     }
 
     local $@;
     no warnings;
     my @result;
     if (wantarray) {
-	@result = eval $eval_string;
+        @result = eval $eval_string;
     }
     else {
-	$result[0] = eval $eval_string;
+        $result[0] = eval $eval_string;
     }
-    $::_EXCL__ = $@;
+    $::_V6_ERR_ = $@;
     return wantarray ? @result : $result[0];
 
 }
 
 Data::Bind->sub_signature(\&eval, { var => '$string' }, { var => '$lang', optional => 1});
+
+package Pugs::Runtime::Perl6::IO;
+use base 'IO::Handle';
+
+unless ( defined $::_V6_STDIN ) {
+    $::_V6_STDIN = new Pugs::Runtime::Perl6::IO;
+    unless ($::_V6_STDIN->fdopen(fileno(STDIN),"r")) {
+        warn "Can't open \$*IN";
+    }
+}
+
+sub slurp {
+    my $self = $_[0];
+    my $content;
+    local $/; 
+    $content = <$self>;
+    return bless \$content, 'Pugs::Runtime::Perl6::Scalar';
+}
 
 package Pugs::Runtime::Perl6::Routine;
 use B ();
@@ -79,8 +98,30 @@ sub arity {
 }
 
 package Pugs::Runtime::Perl6::Scalar;
+use Scalar::Util qw(looks_like_number);
 
 sub defined { CORE::defined(@_) }
+
+sub ref : method {
+    # XXX: should use Data::Bind callconv
+    my $self = $_[0];
+    my $ref = CORE::ref(@_);
+    
+    unless ($ref) {
+	return 'Num' if looks_like_number($self);
+	return 'Str';
+    }
+
+    if ($self->can('meta')) {
+	return $self->meta->name;
+    }
+
+    return 'Hash' if ref($self) eq 'HASH';
+    return 'Array' if ref($self) eq 'ARRAY';
+
+
+    die 'unknown type';
+}
 
 sub isa {
     my $self = $_[0];
@@ -89,6 +130,35 @@ sub isa {
     return 1 if $_[1] eq 'Code' && ref($_[0]) eq 'CODE';
     return 0;
 }
+
+sub eval { 
+    my $s = ${$_[0]};
+    #warn "eval $s\n";
+    Pugs::Runtime::Perl6::eval( [ \$s, \'perl6' ], {} ) 
+}
+
+package Pugs::Runtime::Perl6::Array;
+
+sub map {
+    my ($code, @array);
+    Data::Bind->arg_bind(\@_);
+    my $run = ref($code) eq 'Pugs::Runtime::Perl6::Routine' ? $code->code : $code;
+    my $arity = Pugs::Runtime::Perl6::Routine->new($run)->arity || 1;
+
+    return map $run, @array if $arity == 1;
+
+    my @result;
+    my $i = 0;
+    while ($i <= $#array) {
+	my @x = @array[$i..$i+$arity-1];
+	push @result, $run->([map { \$_ } @x], {});
+	$i += $arity;
+    }
+    return @result;
+}
+
+Data::Bind->sub_signature(\&map, { var => '$code', type => 'Code' }, { var => '@array'} );
+
 
 package Pugs::Runtime::Perl6::Scalar::Alias;
 
