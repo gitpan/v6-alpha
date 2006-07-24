@@ -50,6 +50,16 @@ sub eval {
 
 Data::Bind->sub_signature(\&eval, { var => '$string' }, { var => '$lang', optional => 1});
 
+sub setup_class {
+    my ($class) = caller;
+    no strict 'refs';
+    my @foo = split /::/, $class;
+    my $last = pop @foo;
+    no strict 'refs';
+    no warnings 'redefine';  # Moose already does this?
+    *{'::'.$class} = sub { $class->meta->name };
+}
+
 package Pugs::Runtime::Perl6::IO;
 use base 'IO::Handle';
 
@@ -158,23 +168,6 @@ sub map {
 }
 
 Data::Bind->sub_signature(\&map, { var => '$code', type => 'Code' }, { var => '@array'} );
-
-
-package Pugs::Runtime::Perl6::Scalar::Alias;
-
-sub TIESCALAR {
-    my $class = shift;
-    my $var_ref = shift;
-    return bless $var_ref, $class;
-}
-sub FETCH {
-    my $self = shift;
-    $$self;
-}
-sub STORE {
-    my $self = shift;
-    $$self = shift;
-  }
 
 1;
 

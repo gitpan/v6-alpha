@@ -22,7 +22,7 @@ sub cpan_bareword {
         tail  => $2,
         capture => { cpan_bareword => $1 },
     } )
-        if $_[0] =~ /^ ([_\w\d]+ \- [_\w\d\-\.*]+) ( (?: \(|\;|\s|$ ) .*)$/sx;
+        if $_[0] =~ /^ ([_\w\d\:]+ \- [_\w\d\-\.*]+) ( (?: \(|\;|\s|$ ) .*)$/sx;
     return $class->no_match;
 };
 
@@ -50,6 +50,11 @@ sub substitution {
     } );
 };
 
+my %openmatch = ( '/' => '/',
+                  '{' => '}',
+	          '!' => '!',
+                  '\'' => '\'');
+
 sub rx {
     my $grammar = shift;
     return $grammar->no_match unless $_[0];
@@ -57,16 +62,27 @@ sub rx {
     while ($_[0] =~ s/^:(\w+)//) {
 	$options->{lc($1)} = 1;
     }
-    return $grammar->no_match unless substr($_[0], 0 , 1) eq '/';
-    substr($_[0], 0, 1, '');
-    my ($extracted,$remainder) = Text::Balanced::extract_delimited( "/" . $_[0], "/" );
+    my $open = substr($_[0], 0 , 1, '');
+    my $ret = rx_body($grammar, $_[0], { args => { open => $open } });
+    $ret->capture->{options} = $options if $ret->bool;
+    return $ret;
+}
+
+sub rx_body {
+    my $grammar = shift;
+    use Data::Dumper;
+    my $open = $_[1]->{args}{open};
+    return $grammar->no_match unless exists $openmatch{$open};
+    my ($extracted,$remainder) = $open eq $openmatch{$open}
+        ? Text::Balanced::extract_delimited( $open . $_[0], $openmatch{$open} )
+	: Text::Balanced::extract_bracketed( $open . $_[0], $open.$openmatch{$open} );
     return $grammar->no_match unless length($extracted) > 0;
     $extracted = substr( $extracted, 1, -1 );
     return Pugs::Runtime::Match->new( { 
         bool    => 1,,
         match   => $extracted,
         tail    => $remainder,
-        capture => { options => $options, rx => $extracted },
+        capture => { rx => $extracted },
     } );
 };
 
@@ -202,8 +218,11 @@ sub recompile {
     my $class = shift;
     %hash = (
         '$' => Pugs::Compiler::Regex->compile( q(
-                <?Pugs::Grammar::Term.ident>
-                { return { scalar => '$' . $_[0]->() ,} }
+                [ <?Pugs::Grammar::Term.ident>
+                  { return { scalar => '$' . $_[0]->() ,} }
+                | (\d+)
+                  { return { scalar => '$' . $_[0]->() ,} }
+                ]
             ) ),
         '$.' => Pugs::Compiler::Regex->compile( q(
                 <?Pugs::Grammar::Term.ident>
@@ -245,11 +264,11 @@ sub recompile {
 
         '->' => Pugs::Compiler::Regex->compile( q( 
         [
-            <?ws>? <Pugs::Grammar::Perl6.perl6_expression('no_blocks',0)> <?ws>? 
+            <?ws>? <Pugs::Grammar::Perl6.signature_no_invocant> <?ws>? 
             \{ <?ws>? <Pugs::Grammar::Perl6.statements_or_null> <?ws>? \}
             { return { 
                 pointy_block => $_[0]{'Pugs::Grammar::Perl6.statements_or_null'}->(),
-                signature    => $_[0]{'Pugs::Grammar::Perl6.perl6_expression'}->(),
+                signature    => $_[0]{'Pugs::Grammar::Perl6.signature_no_invocant'}->(),
             } }
         |
             <?ws>?
@@ -291,6 +310,20 @@ sub recompile {
             <Pugs::Grammar::Term.rx>
             { return { 
                     rx => $/{'Pugs::Grammar::Term.rx'}->(),
+                } 
+            }
+        ) ),
+        q(m) => Pugs::Compiler::Regex->compile( q(
+            <Pugs::Grammar::Term.rx>
+            { return { 
+                    rx => $/{'Pugs::Grammar::Term.rx'}->(),
+                } 
+            }
+        ) ),
+        q(/) => Pugs::Compiler::Regex->compile( q(
+            <Pugs::Grammar::Term.rx_body('open','/')>
+            { return { 
+                    rx => $/{'Pugs::Grammar::Term.rx_body'}->(),
                 } 
             }
         ) ),
@@ -350,6 +383,10 @@ sub recompile {
             |
                 <Pugs::Grammar::Perl6.sub_decl>
                     { return $_[0]{'Pugs::Grammar::Perl6.sub_decl'}->();
+                    }
+            |
+                <Pugs::Grammar::Perl6.class_decl>
+                    { return $_[0]{'Pugs::Grammar::Perl6.class_decl'}->();
                     }
             |
                 ### perl5:Test::More

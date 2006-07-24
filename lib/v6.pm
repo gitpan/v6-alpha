@@ -1,5 +1,5 @@
 package v6;
-$v6::VERSION = '0.010';
+$v6::VERSION = '0.011';
 
 # Documentation in the __END__
 use 5.006;
@@ -11,6 +11,15 @@ use Pugs::Runtime::Perl6;
 
 my $bin;
 BEGIN { $bin = ((dirname(__FILE__) || '.') . "/..") };
+
+INIT {
+  if($ENV{V6_RESOURCE_GUARD}) {
+    require BSD::Resource;
+    import BSD::Resource;
+    setrlimit(RLIMIT_CPU(), 30, 60) or die "Couldn't setrlimit: $!\n";
+    setrlimit(RLIMIT_RSS(), 1048000, 1196000) or die "Couldn't setrlimit: $!\n";
+  }
+}
 
 sub pmc_can_output { 1 }
 
@@ -63,7 +72,14 @@ sub pmc_compile {
       eval {
         require Perl::Tidy;
         my $perl5_tidy;
-        Perl::Tidy::perltidy( source => \$perl5, destination => \$perl5_tidy );
+        Perl::Tidy::perltidy( 
+            source => \$perl5, 
+            destination => \$perl5_tidy,
+            argv => [
+                '--maximum-line-length' => 0,
+                '--indent-columns'      => 2,
+            ],
+        );
         $perl5 = $perl5_tidy;
       }
     }

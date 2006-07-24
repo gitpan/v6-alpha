@@ -53,11 +53,11 @@ sub perl6_expression {
     |
     \-\> : 
         [
-            <?ws>? <perl6_expression('no_blocks',0)> <?ws>? 
+            <?ws>? <signature_no_invocant> <?ws>? 
             \{ <?ws>? <statements_or_null> <?ws>? \}
             { return { 
                 pointy_block => $_[0]{statements_or_null}->(),
-                signature    => $_[0]{perl6_expression}->(),
+                signature    => $_[0]{signature_no_invocant}->(),
             } }
         |
             <?ws>?
@@ -151,12 +151,40 @@ sub perl6_expression {
           }
         |
           <block> <?ws>?
-          (while) : <?ws>? <perl6_expression('no_blocks',0)>
           { return { statement => $_[0][0]->(),
+                     content   => $_[0]{block}->() }
+          }
+        |
+            # XXX better error messages
+            { return { die "invalid loop syntax" } }
+       ]
+),
+    { grammar => __PACKAGE__ }
+)->code;
+
+*repeat = Pugs::Compiler::Regex->compile( q(
+    (repeat) : <?ws>?
+        [
+          (while|until) : <?ws>? <perl6_expression('no_blocks',0)>
+          <block> <?ws>?
+          { return { statement => $_[0][0]->(),
+                     which     => $_[0][1]->(),
                      exp2      => $_[0]{perl6_expression}->(),
                      postfix   => 1,
                      content   => $_[0]{block}->() }
           }
+        |
+          <block> <?ws>?
+          (while|until) : <?ws>? <perl6_expression('no_blocks',0)>
+          { return { statement => $_[0][0]->(),
+                     which     => $_[0][1]->(),
+                     exp2      => $_[0]{perl6_expression}->(),
+                     postfix   => 1,
+                     content   => $_[0]{block}->() }
+          }
+        |
+            # XXX better error messages
+            { return { die "invalid repeat syntax" } }
        ]
 ),
     { grammar => __PACKAGE__ }
@@ -175,7 +203,7 @@ sub perl6_expression {
 
 
 *attribute = Pugs::Compiler::Regex->compile( q(
-        (<alnum>+) <?ws> (<alnum>+)
+        (<alnum>+) <?ws> ( [<alnum>|_|\\:\\:]+)
         [
             <?ws> <attribute>
             { return [
@@ -409,6 +437,47 @@ sub perl6_expression {
 )->code;
 
 
+# class
+
+
+*class_decl_name = Pugs::Compiler::Regex->compile( q(
+    ( my | <''> ) <?ws>?
+    ( class | grammar | module | role | package ) <?ws>? 
+    ( <?Pugs::Grammar::Term.cpan_bareword> |
+      <?Pugs::Grammar::Term.bare_ident> |
+      <''> ) 
+        { return { 
+            my         => $_[0][0]->(),
+            statement  => $_[0][1]->(),
+            name       => $_[0][2]->(),
+        } }
+),
+    { grammar => __PACKAGE__ }
+)->code;
+
+
+*class_decl = Pugs::Compiler::Regex->compile( q(
+    <class_decl_name> <?ws>? 
+        # attr
+        <attribute> <?ws>?
+        ( <block>? )
+        { return { 
+            my         => $_[0]{class_decl_name}->()->{my},
+            statement  => $_[0]{class_decl_name}->()->{statement},
+            name       => $_[0]{class_decl_name}->()->{name},
+            
+            attribute  => $_[0]{attribute}->(),
+            block      => $_[0][0]->(),
+        } }
+),
+    { grammar => __PACKAGE__ }
+)->code;
+
+
+
+# /class
+
+
 *begin_block = Pugs::Compiler::Regex->compile( q(
     (          
    BEGIN 
@@ -464,6 +533,10 @@ sub perl6_expression {
     |
     <loop>
         { return $_[0]{loop}->();
+        }
+    |
+    <repeat>
+        { return $_[0]{repeat}->();
         }
     |
     <try>   # this actually don't belong here
