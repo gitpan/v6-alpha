@@ -99,7 +99,7 @@ sub _emit_code {
 sub _emit_double_quoted {
     my $n = $_[0];
     # special case for $POSITION
-    my @strings = map { $_ =~ s/\$(\?.*POSITION)/&$1/; $_ } (split /([&\$][*?][:\w.]+)/, $n);
+    my @strings = map { $_ =~ s/\$(\?.*POSITION)/&$1/; $_ } (split /([&\$][*?][:\w.]+\w)/, $n);
     return '""' unless @strings;
     return join('.', map { /^\$\*/ ? Pugs::Runtime::Common::mangle_var($_)
                          : /^.\?/ ? 'do { '.Pugs::Compiler::Perl6->compile($_)->{perl5}.' }'
@@ -503,7 +503,7 @@ sub default {
             return " (defined $param )";
         }
 
-        if ($subname eq 'substr' || $subname eq 'split' || $subname eq 'die' || $subname eq 'return' || $subname eq 'push' || $subname eq 'shift' || $subname eq 'join' || $subname eq 'index' || $subname eq 'undef' || $subname eq 'rand' || $subname eq 'int' || $subname eq 'splice' || $subname eq 'keys' || $subname eq 'values' || $subname eq 'sort') {
+        if ($subname eq 'substr' || $subname eq 'split' || $subname eq 'die' || $subname eq 'return' || $subname eq 'push' || $subname eq 'shift' || $subname eq 'join' || $subname eq 'index' || $subname eq 'undef' || $subname eq 'rand' || $subname eq 'int' || $subname eq 'splice' || $subname eq 'keys' || $subname eq 'values' || $subname eq 'sort' || $subname eq 'chomp') {
             return $subname . '(' . _emit( $n->{param} ) . ')';
         }
 
@@ -514,6 +514,9 @@ sub default {
         # runtime thunked builtins
         if ($subname eq 'eval') {
             return 'Pugs::Runtime::Perl6::eval('. _emit_parameter_capture( $n->{param} ) . ')';
+        }
+        if ($subname eq 'open') {
+            return 'Perl6::Internals::open('. _emit_parameter_capture( $n->{param} ) . ')';
         }
 
         my $sub_name = Pugs::Runtime::Common::mangle_ident( $n->{sub}{bareword} );
@@ -554,7 +557,7 @@ sub default {
         if ( exists $n->{self}{bareword} ) {
             # Str.new;
             return 
-                " " . _emit( $n->{self} ) . "->" . _emit( $n->{method} ) . 
+                " '" . _emit( $n->{self} ) . "'->" . _emit( $n->{method} ) . 
                 "(" . _emit( $n->{param} ) . ") ";
         }
     
@@ -875,14 +878,17 @@ sub infix {
         if ( my $subs = $n->{exp2}{substitution} ) {
             # XXX: use Pugs::Compiler::RegexPerl5
             # XXX: escape
-            return _emit( $n->{exp1} ) . ' =~ s{' . $subs->{substitution}[0]. '}{'. $subs->{substitution}->[1] .'}' .
-                ( $subs->{options}{g} ? 'g' : '' )
+	    my $p5options = join('', map { $subs->{options}{$_} ? $_ : '' } qw(s m g e));
+            return _emit( $n->{exp1} ) . ' =~ s{' . $subs->{substitution}[0]. '}{'. $subs->{substitution}->[1] .'}' . $p5options
                 if $subs->{options}{p5};
             return _not_implemented( $n, "rule" );
         }
 	if ( my $rx = $n->{exp2}{rx} ) {
 	    if ( !$rx->{options}{perl5} ) {
-		return '$::_V6_MATCH_ = Pugs::Compiler::Regex->compile( q{'.$rx->{rx}.'} )->match('._emit($n->{exp1}).')';
+		my $regex = $rx->{rx};
+		# XXX: hack for /$pattern/
+		$regex = 'q{'.$regex.'}' unless $regex =~ m/^\$[\w\d]+/;
+		return '$::_V6_MATCH_ = Pugs::Compiler::Regex->compile( '.$regex.' )->match('._emit($n->{exp1}).')';
 	    }
 	}
         return _emit( $n->{exp1} ) . ' =~ (ref(' . _emit( $n->{exp2} ).') eq "Regexp" ? '._emit($n->{exp2}).' : quotemeta('._emit($n->{exp2}).'))';
@@ -894,7 +900,7 @@ sub infix {
             #warn "set $n->{exp1}{scalar}";
             return _var_set( $n->{exp1}{scalar} )->( _var_get( $n->{exp2} ) );
         }
-        if ( exists $n->{exp1}{op1}  &&
+        if ( exists $n->{exp1}{op1}  && ref $n->{exp1}{op1} &&
              $n->{exp1}{op1}{op} eq 'has' ) {
             #warn "{'='}: ", Dumper( $n );
             # XXX - changes the AST
@@ -1097,6 +1103,10 @@ sub prefix {
 
     if ($n->{op1}{op} eq '?') { # bool
         return '('._emit($n->{exp1}).' ? 1 : 0 )';
+    }
+
+    if ($n->{op1}{op} eq '=') { # iterate
+        return _emit($n->{exp1}).'->getline';
     }
     
     return _not_implemented( $n, "prefix" );

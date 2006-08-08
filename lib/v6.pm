@@ -1,5 +1,5 @@
 package v6;
-$v6::VERSION = '0.011';
+$v6::VERSION = '0.012';
 
 # Documentation in the __END__
 use 5.006;
@@ -56,11 +56,13 @@ sub pmc_compile {
             "use Config;\n".
             "use lib split(/\\Q\$Config{path_sep}/, \$ENV{PERL6LIB} || '');\n"
         ) : '').
-        "use Scalar::Util;\n" .
-        "use Pugs::Runtime::Perl6;\n" . 
-        "use Pugs::Runtime::Perl6Prelude;\n" . 
-        "use strict;\n" . 
-        "no warnings ('void', 'uninitialized');\n" .   # t/07-try.t, t/07-ref.t
+        "use Scalar::Util;
+         use Pugs::Runtime::Perl6;
+         use Pugs::Runtime::Perl6Prelude;
+         use strict;
+         no strict 'refs';
+         no warnings ('void', 'uninitialized');
+        " .  
         # "Pugs::Runtime::Perl6Prelude->import();\n" .   # XXX - is import() needed?
         $perl5 . "\n" .
         "; 1;\n";

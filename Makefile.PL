@@ -12,11 +12,12 @@ BEGIN {
 }
 use lib '../..', (@inc ? $inc[-1] : ());
 use inc::Module::Install @inc;
+use File::Spec;
 
     name('v6-alpha');
 all_from('lib/v6.pm');
 
-requires('Pugs::Compiler::Rule' => '0.12');
+requires('Pugs::Compiler::Rule' => '0.13');
 requires('Module::Compile'      => '0.17');
 requires('Scalar::Util'         => '0');
 requires('Devel::Caller'        => '0.10');
@@ -38,18 +39,28 @@ if (@inc) {
         /^t\// or next;
         mkpath(dirname($_));
         my $src = "$inc[-1]/../$_";
-        $src = "../../ext/Test/lib/Test.pm" if $_ eq 't/Test.pm';
+        $src = "$inc[-1]/../ext/Test/lib/Test.pm" if $_ eq 't/Test.pm';
         copy($src => $_);
     }
 }
 
 makemaker_args  (
-    test => { TESTS => join ' ', "t/*.t", "t/*/*.t", "t/*/*/*.t" },
+    test => {
+        TESTS => join ' ',
+            map {glob File::Spec->catfile('t', ('*') x $_, '*.t')} 0..3
+    },
 );
 
-clean_files('t/*.tc', 't/*.pmc', 't/*/*.tc', 't/*/*.pmc', 't/*/*/*.tc', 't/*/*/*.pmc');
+clean_files(map {glob File::Spec->catfile('t', ('*') x $_, '*.{t,pm}c')} 0..3);
 
 &WriteAll;
 
 # Evil hack to add PERL6LIB path to Makefile
 system($^X, '-p', '-i.old', '-e', 's+(?=test_harness)+%ENV=(%ENV,qw( PERL6LIB ./t) );+g', 'Makefile');
+
+# clean the precompiled rules cache
+eval {
+    require Cache::FileCache;
+    my $cache = new Cache::FileCache( { 'namespace' => 'v6-rules' } );
+    $cache->Clear;
+};
