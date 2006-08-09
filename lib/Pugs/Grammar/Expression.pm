@@ -6,6 +6,7 @@ use warnings;
 #use Pugs::Compiler::Rule;
 use Pugs::Grammar::Precedence;
 use Pugs::Grammar::Term;
+use Pugs::Grammar::Quote;
 use Pugs::Grammar::Operator;
 use Pugs::Grammar::StatementControl;
 use base 'Pugs::Grammar::Base';
@@ -15,9 +16,7 @@ use Data::Dumper;
 $Data::Dumper::Indent = 1;
 $Data::Dumper::Sortkeys = 1;
 
-# XXX - PCR is not calling this
-*ws = &Pugs::Grammar::BaseCategory::ws;
-
+# TODO - grab the delimiters from StatementModifier
 my $rx_end_with_blocks = qr/
                 ^ \s* (?: 
                             [});\]] 
@@ -87,8 +86,11 @@ sub ast {
         
         my $m1 = Pugs::Grammar::Operator->parse( $match, { p => $pos } );
         my $m2;
-        $m2 = Pugs::Grammar::Term->parse( $match, { p => $pos } )
-            if $expect_term;
+        if ( $expect_term ) {
+            $m2 = Pugs::Grammar::Term->parse( $match, { p => $pos } );
+            $m2 = Pugs::Grammar::Quote->parse( $match, { p => $pos } )
+                unless $m2;
+        }
         #print "m1 = " . Dumper($m1->()) . "m2 = " . Dumper($m2->());
 
         my $pos2;
@@ -204,7 +206,8 @@ sub ast {
             }
             # term<> 
             if ( $m2 && $m2->tail && $m2->tail =~ /^\</ ) {
-                my $paren = Pugs::Grammar::Term->parse( $match, { p => $pos2 } );
+                # XXX - is '<' a quote?
+                my $paren = Pugs::Grammar::Quote->parse( $match, { p => $pos2 } );
                 if ( exists $m2->()->{dot_bareword} ) {
                     $paren->data->{capture} = \{ 
                         op1 => 'method_call', 

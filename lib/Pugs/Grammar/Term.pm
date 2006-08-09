@@ -57,12 +57,16 @@ sub rx {
     my $grammar = shift;
     return $grammar->no_match(@_) unless $_[0];
     my $options;
-    while ($_[0] =~ s/^:(\w+)//) {
-	$options->{lc($1)} = 1;
+    my $pos = $_[1]{p} || 0;
+    while ( substr( $_[0], $pos ) =~ m/^:(\w+)/ ) {
+        $options->{lc($1)} = 1;
+        $pos += 1 + length($1);
     }
-    my $open = substr($_[0], 0 , 1, '');
-    my $ret = rx_body($grammar, $_[0], { args => { open => $open } });
-    $ret->capture->{options} = $options if $ret->bool;
+    my $open = substr($_[0], $pos , 1);
+    #print "rx options ", keys( %$options ), ", open $open \n";
+    my $ret = rx_body($grammar, $_[0], { p => $pos+1, args => { open => $open } });
+    #print "rx match: ", Dumper($ret->data->{capture} );
+    ${ $ret->data->{capture} }->{options} = $options if $ret;
     return $ret;
 }
 
@@ -75,7 +79,8 @@ sub rx_body {
     my $s = substr( $_[0], $pos );
     my ($extracted,$remainder) = $open eq $openmatch{$open}
         ? Text::Balanced::extract_delimited( $open . $s, $openmatch{$open} )
-	: Text::Balanced::extract_bracketed( $open . $s, $open.$openmatch{$open} );
+        : Text::Balanced::extract_bracketed( $open . $s, $open.$openmatch{$open} );
+    #print "rx_body at $s got $extracted\n";
     return $grammar->no_match(@_) unless length($extracted) > 0;
     $extracted = substr( $extracted, 1, -1 );
     return Pugs::Runtime::Match->new( { 
@@ -87,60 +92,6 @@ sub rx_body {
         capture => \{ rx => $extracted },
     } );
 };
-
-sub single_quoted {
-    my $grammar = shift;
-    return $grammar->no_match(@_) unless $_[0];
-    my $pos = $_[1]{p} || 0;
-    my $s = substr( $_[0], $pos );
-    my ($extracted,$remainder) = Text::Balanced::extract_delimited( "'" . $s, "'" );
-    return $grammar->no_match(@_) unless length($extracted) > 0;
-    $extracted = substr( $extracted, 1, -1 );
-    return Pugs::Runtime::Match->new( { 
-        bool    => \1,
-        str     => \$_[0],
-        match   => [],
-        from    => \$pos,
-        to      => \( length($_[0]) - length($remainder) ),
-        capture => \$extracted,
-    } );
-}
-
-sub double_quoted {
-    my $grammar = shift;
-    return $grammar->no_match(@_) unless $_[0];
-    my $pos = $_[1]{p} || 0;
-    my $s = substr( $_[0], $pos );
-    my ($extracted,$remainder) = Text::Balanced::extract_delimited( '"' . $s, '"' );
-    return $grammar->no_match(@_) unless length($extracted) > 0;
-    $extracted = substr( $extracted, 1, -1 );
-    return Pugs::Runtime::Match->new( { 
-        bool    => \1,
-        str     => \$_[0],
-        match   => [],
-        from    => \$pos,
-        to      => \( length($_[0]) - length($remainder) ),
-        capture => \$extracted,
-    } );
-}
-
-sub angle_quoted {
-    my $grammar = shift;
-    return $grammar->no_match(@_) unless $_[0];
-    my $pos = $_[1]{p} || 0;
-    my $s = substr( $_[0], $pos );
-    my ($extracted,$remainder) = Text::Balanced::extract_bracketed( '<' . $s, '<..>' );
-    return $grammar->no_match(@_) unless length($extracted) > 0;
-    $extracted = substr( $extracted, 1, -1 );
-    return Pugs::Runtime::Match->new( { 
-        bool    => \1,
-        str     => \$_[0],
-        match   => [],
-        from    => \$pos,
-        to      => \( length($_[0]) - length($remainder) ),
-        capture => \$extracted,
-    } );
-}
 
 *ident = Pugs::Compiler::Regex->compile( q(
         \!      # $!
@@ -242,6 +193,10 @@ sub recompile {
                 <?Pugs::Grammar::Term.ident>
                 { return { scalar => '$.' . $_[0]->() ,} }
             ),
+        '$<' => q(
+                ( <?Pugs::Grammar::Term.ident> ) \>
+                { return { scalar => { match_variable => $_[0][0]->() ,} } }
+            ),
         '@' => q(
                 # XXX t/subroutines/multidimensional_arglists.t
                 \; <?Pugs::Grammar::Term.ident>
@@ -300,15 +255,6 @@ sub recompile {
                 return { die => "not implemented" } 
             }
             ),
-        q(') =>       # ' 
-            q(
-            <Pugs::Grammar::Term.single_quoted>
-            { return { single_quoted => $/{'Pugs::Grammar::Term.single_quoted'}->() ,} }
-            ),
-        q(") => q(
-            <Pugs::Grammar::Term.double_quoted>
-            { return { double_quoted => $/{'Pugs::Grammar::Term.double_quoted'}->() ,} }
-            ),
         q(s) => q(
             <Pugs::Grammar::Term.substitution>
             { return { 
@@ -334,13 +280,6 @@ sub recompile {
             <Pugs::Grammar::Term.rx_body('open','/')>
             { return { 
                     rx => $/{'Pugs::Grammar::Term.rx_body'}->(),
-                } 
-            }
-            ),
-        q(<) => q(
-            <Pugs::Grammar::Term.angle_quoted>
-            { return { 
-                    angle_quoted => $/{'Pugs::Grammar::Term.angle_quoted'}->(),
                 } 
             }
             ),
@@ -388,6 +327,14 @@ sub recompile {
                     pair => { 
                         key   => { single_quoted => $/[0]() }, 
                         value => { num => 1 }, 
+                } } }
+                |
+                # :!foo 
+                <'!'> ((_|\w)+)
+                { return {
+                    pair => { 
+                        key   => { single_quoted => $/[0]() }, 
+                        value => { num => 0 }, 
                 } } }
                 ]            
 

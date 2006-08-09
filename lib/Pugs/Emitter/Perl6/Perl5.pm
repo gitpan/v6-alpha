@@ -33,6 +33,11 @@ sub _var_get {
         if exists $env{$s} &&
            exists $env{$s}{get};
     
+    if ( ref $s eq 'HASH' ) {
+        my $v = $s->{match_variable};
+        return Pugs::Runtime::Common::mangle_var( '$/' ) . '->{' . $v . '}';
+    }
+
     # default
     return "\$self->{'" . substr($s,2) . "'}"
         if substr($s,1,1) eq '.';
@@ -392,7 +397,7 @@ sub default {
         return  "{\n" . _emit( $n->{bare_block} ) . "\n }\n";
     }
 
-    if ( $n->{op1} eq 'call' ) {
+    if ( exists $n->{op1} && $n->{op1} eq 'call' ) {
         # warn "call: ",Dumper $n;
 
         if ($n->{sub}{scalar} || $n->{sub}{statement}) {
@@ -526,7 +531,7 @@ sub default {
             (exists $n->{param} ? '(' . _emit_parameter_capture( $n->{param} ) . ')' : '');
     }
     
-    if ( $n->{op1} eq 'method_call' ) {    
+    if ( exists $n->{op1} && $n->{op1} eq 'method_call' ) {    
         #warn "method_call: ", Dumper( $n );
         if ( $n->{method}{dot_bareword} eq 'print' ||
              $n->{method}{dot_bareword} eq 'warn' ) {
@@ -714,6 +719,10 @@ sub statement {
                 ( $n->{statement} eq 'class' 
                     ? ";
                         use Moose; Pugs::Runtime::Perl6->setup_class"
+                    : "" ) .
+                ( $n->{statement} eq 'role' 
+                    ? ";
+                        use Moose::Role; Pugs::Runtime::Perl6->setup_class"
                     : "" ) .
                 ";
                 use Exporter 'import'; 
@@ -1010,7 +1019,7 @@ sub postcircumfix {
     if ( $n->{op1}{op} eq '{' &&
          $n->{op2}{op} eq '}' ) {
         my $name = _emit( $n->{exp1} );
-        die unless $name =~ m/^\%/;
+        # die "trying to emit ${name}{exp}" unless $name =~ m/^\%/;
         $name =~ s/^\%/\$/;
         return $name . 
             '{ ' . 

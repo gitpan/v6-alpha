@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use base qw(Pugs::Grammar::BaseCategory);
 use Pugs::Grammar::StatementControl;
+use Pugs::Grammar::StatementModifier;
 use Pugs::Grammar::Expression;
 use Pugs::Grammar::Pod;
 
@@ -11,9 +12,6 @@ use Pugs::Runtime::Match;
 use Pugs::Grammar::P6Rule; # our local version of Grammar::Rule.pm
 
 use Data::Dumper;
-
-# TODO - redefine <ws> to test Pod.pm after each \n
-# *ws = &Pugs::Grammar::BaseCategory::ws;
 
 sub perl6_expression {
     #print "perl6_expression param: ", Dumper @_;
@@ -282,7 +280,7 @@ sub perl6_expression {
 )->code;
 
 
-*rule_decl_name = Pugs::Compiler::Regex->compile( q(
+*rule_decl_name = Pugs::Compiler::Token->compile( q(
     ( multi | <''> ) <?ws>?
     ( rule | regex | token ) <?ws>?
     ( <?Pugs::Grammar::Term.ident>? ) 
@@ -296,8 +294,8 @@ sub perl6_expression {
 )->code;
 
 
-*rule_decl = Pugs::Compiler::Regex->compile( q(
-    <rule_decl_name> : <?ws>?   
+*rule_decl = Pugs::Compiler::Token->compile( q(
+    <rule_decl_name> <?ws>?   
         # (sig)
         <sub_signature> <?ws>? 
         # attr
@@ -433,16 +431,16 @@ sub perl6_expression {
     |
     <perl6_expression> 
         [
-            <?ws>? (if|unless|for|while|until) <?ws>?
-            $<exp1> := <perl6_expression> 
-            #{ print "$a if $b ", Dumper( $/->data );
-            #    print Dumper( $_[0]{perl6_expression}->data ),
-            #          Dumper( $_[0]{exp1}->data );
+            <?ws>? 
+            <Pugs::Grammar::StatementModifier.parse> 
+            #{ print "\$a if \$b ", Dumper( $/->data );
+            #  print Dumper( $_[0]{'perl6_expression'}->data ),
+            #        Dumper( $_[0]{'Pugs::Grammar::StatementModifier.parse'}->data );
             #}
             { return {
-                statement => $_[0][0]->(),
-                exp2 => $_[0]{perl6_expression}->(),
-                exp1 => $_[0]{exp1}->(),
+                statement => $/->{'Pugs::Grammar::StatementModifier.parse'}->()->{'statement'},
+                exp2 => $/->{'perl6_expression'}->(),
+                exp1 => $/->{'Pugs::Grammar::StatementModifier.parse'}->()->{'exp1'},
             } } 
         |
             { 

@@ -15,86 +15,127 @@ our @rule_terms;
 
 # TODO - reuse 'ident' from other modules
 Pugs::Compiler::Regex->install( 
-    ident => q(
+    ident => 
+    q(
         [ <alnum> | _ | \\: \\: ]+
     ));
 
-Pugs::Compiler::Regex->install( 
-    closure_rule => q(
-        # callback perl6 compiler
-        \\{ <Pugs::Grammar::Perl6.parse> \\}
-        { return { closure => $/{'Pugs::Grammar::Perl6.parse'}() ,} }
+Pugs::Compiler::Token->install(
+    capturing_group =>
+    q(
+        \\( <rule> \\)
+        { return { capturing_group => $/{rule}() ,} }
     ));
-Pugs::Compiler::Regex->install( 
-    variable_rule => q(
-        [ \\$ | \\@ | \\% ]
-        \\^?
-        [ <alnum> | _ | \\: \\: ]+
-        { return { variable => $() ,} }
+
+Pugs::Compiler::Token->install( 
+    non_capturing_group => 
+    q(
+        \\[ <rule> \\] 
+        { return $/{rule}() }
     ));
+
 Pugs::Compiler::Regex->install( 
-    match_variable => q(
-        [ \\$ | \\@ | \\% ] <digit>+
-        { return { match_variable => $/() ,} }
-    ));
-Pugs::Compiler::Regex->install( 
-    metasyntax => q(
+    metasyntax => 
+    q(
         \\< ([ <metasyntax> | . ]+?) \\>
         { return { metasyntax => $/[0]() ,} }
     ));
-Pugs::Compiler::Regex->install( 
-    dot => q(
-        \\.    
-        { return { 'dot' => 1 ,} }
+
+Pugs::Compiler::Token->install( 
+    named_capture_body => 
+    q(
+    | <capturing_group>     { return { rule => $/{capturing_group}(), } } 
+    | <non_capturing_group> { return { rule => $/{non_capturing_group}(),} } 
+    | <metasyntax>          { return { rule => $/{metasyntax}(), } } 
+    | { die "invalid alias syntax" }
     ));
-Pugs::Compiler::Regex->install( 
-    special_char => q(
-        \\\\ .
-        { return { special_char => $(), } } 
-    ));
-Pugs::Compiler::Regex->install( 
-    non_capturing_group => q(
-        \\[ : <rule> \\] 
-        { return $/{rule}() }
-    ));
-*named_capture_body = Pugs::Compiler::Regex->compile(q(
-        |  \\( : <rule> \\) { return { rule => $/{rule}(),       } } 
-        |  \\[ : <rule> \\] { return { rule => $/{rule}(),       } } 
-        |    <metasyntax>   { return { rule => $/{metasyntax}(), } } 
-    ))->code;
-*named_capture = Pugs::Compiler::Regex->compile(q(
+
+@Pugs::Grammar::P6Rule::rule_terms = (
+
+  #*capturing_group = 
+  Pugs::Compiler::Token->compile(q(
+        \\( <rule> \\)
+        { return { capturing_group => $/{rule}() ,} }
+    )),
+  #*after = 
+  Pugs::Compiler::Token->compile(q(
+        \\< after <?ws> <rule> \\> 
+        { return { after => {
+                rule  => $/{rule}(),
+            }, } 
+        }
+    )),
+  #*before = 
+  Pugs::Compiler::Token->compile(q(
+        \\< before <?ws> <rule> \\> 
+        { return { before => {
+                rule  => $/{rule}(),
+            }, } 
+        }
+    )),
+  #*negate = 
+  Pugs::Compiler::Token->compile(q(
+        \\< \\! <rule> \\> 
+        { return { negate => {
+                rule  => $/{rule}(),
+            }, } 
+        }
+    )),
+  Pugs::Compiler::Regex->compile( 
+    #metasyntax => 
+    q(
+        \\< ([ <metasyntax> | . ]+?) \\>
+        { return { metasyntax => $/[0]() ,} }
+    )),
+  #*named_capture = 
+  Pugs::Compiler::Token->compile(q(
         \\$ \\< <ident> \\> <?ws>? \\:\\= <?ws>? <named_capture_body>
         { my $body = $/{named_capture_body}();
           $body->{ident} = $/{ident}();
           return { named_capture => $body, } 
         }
-    ))->code;
-*before = Pugs::Compiler::Regex->compile(q(
-        \\< before <?ws> : <rule> \\> 
-        { return { before => {
-                rule  => $/{rule}(),
-            }, } 
-        }
-    ))->code;
-*after = Pugs::Compiler::Regex->compile(q(
-        \\< after <?ws> : <rule> \\> 
-        { return { after => {
-                rule  => $/{rule}(),
-            }, } 
-        }
-    ))->code;
-*negate = Pugs::Compiler::Regex->compile(q(
-        \\< \\! : <rule> \\> 
-        { return { negate => {
-                rule  => $/{rule}(),
-            }, } 
-        }
-    ))->code;
-*capturing_group = Pugs::Compiler::Regex->compile(q(
-        \\( : <rule> \\)
-        { return { capturing_group => $/{rule}() ,} }
-    ))->code;
-*colon = Pugs::Compiler::Regex->compile(q(
+    )),
+  Pugs::Compiler::Regex->compile( 
+    #match_variable => 
+    q(
+        [ \\$ | \\@ | \\% ] <digit>+
+        { return { match_variable => $/() ,} }
+    )),
+  Pugs::Compiler::Regex->compile( 
+    #variable_rule => 
+    q(
+        [ \\$ | \\@ | \\% ]
+        \\^?
+        [ <alnum> | _ | \\: \\: ]+
+        { return { variable => $() ,} }
+    )),
+  Pugs::Compiler::Regex->compile( 
+    # closure_rule => 
+    q(
+        # callback perl6 compiler
+        \\{ <Pugs::Grammar::Perl6.parse> \\}
+        { return { closure => $/{'Pugs::Grammar::Perl6.parse'}() ,} }
+    )),
+  Pugs::Compiler::Regex->compile( 
+    #special_char => 
+    q(
+        \\\\ .
+        { return { special_char => $(), } } 
+    )),
+  Pugs::Compiler::Token->compile( 
+    #dot => 
+    q(
+        \\.    
+        { return { 'dot' => 1 ,} }
+    )),
+  Pugs::Compiler::Token->compile( 
+    #non_capturing_group => 
+    q(
+        \\[ <rule> \\] 
+        { return $/{rule}() }
+    )),
+  #*colon = 
+  Pugs::Compiler::Token->compile(q(
         (  \\:\\:\\:  
         |  \\:\\?     
         |  \\:\\+     
@@ -103,18 +144,29 @@ Pugs::Compiler::Regex->install(
         |  \\^\\^  |  \\^
         )  
         { return { colon => $/() ,} }
-    ))->code;
+    )),
+); # /@rule_terms
     
-*term = Pugs::Compiler::Regex->compile(q(
-    |  $<term>  := <@Pugs::Grammar::P6Rule::rule_terms>
-        { return $/{term}() }
-    |  [ <-[ \\] \\} \\\) \\: \\? \\+ \\* \\| \\& ]> ]
-        { return { 'constant' => $() ,} }
-    ))->code;
+*term = Pugs::Compiler::Token->compile(q^
+    |  <before \\} > { $::_V6_SUCCEED = 0 } 
+    |  <before \\] > { $::_V6_SUCCEED = 0 } 
+    |  <before \\) > { $::_V6_SUCCEED = 0 } 
+    |  <before \\> > { $::_V6_SUCCEED = 0 } 
+    |  <@Pugs::Grammar::P6Rule::rule_terms>
+        { 
+            #print "term: ", Dumper( $_[0]->data );
+            return $/{'Pugs::Grammar::P6Rule::rule_terms'}() 
+        }
+    |  ( <-[ \\] \\} \\\) \\: \\? \\+ \\* \\| \\& ]> )
+        { 
+            #print "constant: ", Dumper( $_[0]->data );
+            return { 'constant' => $/[0]->() ,} 
+        }
+    ^ )->code;
 
-*quantifier = Pugs::Compiler::Regex->compile(q(
+*quantifier = Pugs::Compiler::Token->compile(q(
     $<ws1>   := (<?ws>?)
-    <term> :
+    <term> 
     $<ws2>   := (<?ws>?)
     $<quant> := (
         |  \\?\\?  
@@ -134,7 +186,7 @@ Pugs::Compiler::Regex->install(
         } 
     }
 ))->code;
-*concat = Pugs::Compiler::Regex->compile(q(
+*concat = Pugs::Compiler::Token->compile(q(
     $<q1> := <quantifier> 
     [   $<q2> := <concat> 
         { return { concat => [ 
@@ -145,10 +197,10 @@ Pugs::Compiler::Regex->install(
     |   { return { quant => $/{q1}() ,} } 
     ]
 ))->code;
-*rule = Pugs::Compiler::Regex->compile(q(
+*rule = Pugs::Compiler::Token->compile(q(
     [ <?ws>? \\| ]?
     $<q1> := <concat> 
-    [   \\| : $<q2> := <rule> 
+    [   \\| $<q2> := <rule> 
         { return { alt => [ 
                 $/{q1}(), 
                 $/{q2}(),
@@ -158,25 +210,4 @@ Pugs::Compiler::Regex->install(
     ]
 ))->code;
 
-
-    # XXX - currying should be made automatically by <@xxx> runtime
-    # curry @rule_terms with Grammar
-    @rule_terms = map { 
-        my $method = $_;
-        sub{ 
-            #warn "Trying $method\n";
-            # $str, $state, $_[2], $_[3]{match}, @_[4,5,6,7]
-            my $match = Pugs::Grammar::P6Rule->$method($_[0], { p => 0 } );
-            #warn "Match $method ".Dumper($match) if $match->{bool};
-            return $match;
-        }
-    }
-    qw(  capturing_group 
-         after before negate metasyntax 
-         named_capture match_variable
-         variable_rule closure_rule special_char dot
-         non_capturing_group colon 
-    );
-
 1;
-
