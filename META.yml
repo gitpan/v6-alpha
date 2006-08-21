@@ -15,8 +15,8 @@ requires:
   Devel::Caller: 0.10
   Module::Compile: 0.17
   Moose: 0.10
-  Pugs::Compiler::Rule: 0.14
+  Pugs::Compiler::Rule: 0.16
   Scalar::Util: 0
   Sub::Multi: 0
   perl: 5.6.0
-version: 0.013
+version: 0.014

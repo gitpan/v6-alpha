@@ -1,5 +1,5 @@
 package v6;
-$v6::VERSION = '0.013';
+$v6::VERSION = '0.014';
 
 # Documentation in the __END__
 use 5.006;
@@ -62,6 +62,11 @@ sub pmc_compile {
          use strict;
          no strict 'refs';
          no warnings ('void', 'uninitialized');
+         \$::_V6_COMPILER_OS      = '$^O';
+         \$::_V6_COMPILER_NAME    = 'v6.pm';
+         \$::_V6_COMPILER_VERSION = '$v6::VERSION';
+         my \%_V6_PAD;
+         our \%_V6_STATE;
         " .  
         # "Pugs::Runtime::Perl6Prelude->import();\n" .   # XXX - is import() needed?
         $perl5 . "\n" .

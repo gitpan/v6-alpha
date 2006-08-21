@@ -7,19 +7,31 @@ use warnings;
 use Data::Dumper;
 use Data::Bind;
 use Sub::Multi;
-
+use PadWalker;
 use IO::File ();
 use Pugs::Compiler::Regex ();
+use List::Util; # 'reduce'
+
+$::_V6_BACKEND = 'BACKEND_PERL5';
 
 # TODO - see Pugs::Runtime::Grammar for metaclass stuff
 
 use constant Inf => 100**100**100;
 use constant NaN => Inf - Inf;
 
+sub pad_depth {
+    local $@;
+    my $idx = 0;
+    $idx++ while eval { PadWalker::peek_my($idx) };
+    $idx;
+}
+
 sub perl {
     local $Data::Dumper::Terse    = 1;
     local $Data::Dumper::Sortkeys = 1;
-    return join( ', ', Data::Dumper::Dumper( @_ ) );
+	my $dumped = join(', ', Data::Dumper::Dumper(@_));
+	$dumped =~ s/\n$//;
+	return $dumped;
 }
 
 sub eval {
@@ -47,6 +59,7 @@ sub eval {
         $result[0] = eval $eval_string;
     }
     $::_V6_ERR_ = $@;
+    #warn $::_V6_ERR_ if $::_V6_ERR_;
     return wantarray ? @result : $result[0];
 
 }
@@ -117,9 +130,13 @@ sub defined { CORE::defined(@_) }
 
 sub ref : method {
     # XXX: should use Data::Bind callconv
+    #print "ref: ", Data::Dumper::Dumper( @_ );
     my $self = $_[0];
     my $ref = CORE::ref(@_);
     
+    return 'Hash' if ref($self) eq 'HASH';
+    return 'Array' if ref($self) eq 'ARRAY';
+
     unless ($ref) {
 	return 'Num' if looks_like_number($self);
 	return 'Str';
@@ -129,8 +146,6 @@ sub ref : method {
 	return $self->meta->name;
     }
 
-    return 'Hash' if ref($self) eq 'HASH';
-    return 'Array' if ref($self) eq 'ARRAY';
 
 
     die 'unknown type';
@@ -138,16 +153,38 @@ sub ref : method {
 
 sub isa {
     my $self = $_[0];
-    return 1 if $_[1] eq 'Str'  && defined $_[0];
-    return 1 if $_[1] eq 'Num'  && defined $_[0];
-    return 1 if $_[1] eq 'Code' && ref($_[0]) eq 'CODE';
+    return 1 if $_[1] eq 'Hash'  && ref($_[0]) eq 'HASH';
+    return 1 if $_[1] eq 'Array' && ref($_[0]) eq 'ARRAY';
+    return 1 if $_[1] eq 'Str'   && defined $_[0];
+    return 1 if $_[1] eq 'Num'   && defined $_[0];
+    return 1 if $_[1] eq 'Code'  && ref($_[0]) eq 'CODE';
     return 0;
 }
 
 sub eval { 
     my $s = ${$_[0]};
     #warn "eval $s\n";
-    Pugs::Runtime::Perl6::eval( [ \$s, \'perl6' ], {} ) 
+    Pugs::Runtime::Perl6::eval( [ \$s, \'perl6' ], {} )     # '
+}
+
+sub sort { 
+    sort @_ 
+}
+
+sub chars { 
+    length "@_" 
+}
+
+sub reverse { 
+    my $s = reverse $_[0];
+    $s;
+}
+
+sub words { 
+    # todo - parameter handling
+    my $s = $_[0];
+    $s =~ s/^\s+//;
+    my @tmp = split( /\s+/, $s ); 
 }
 
 package Pugs::Runtime::Perl6::Array;
@@ -171,6 +208,17 @@ sub map {
 }
 
 Data::Bind->sub_signature(\&map, { var => '$code', type => 'Code' }, { var => '@array'} );
+
+package Pugs::Runtime::Perl6::Hash;
+
+sub str {
+    join( "\n",
+        map {
+            $_ . "\t" . $_[0]{$_}
+        }
+        keys %{$_[0]}
+    );
+}
 
 1;
 

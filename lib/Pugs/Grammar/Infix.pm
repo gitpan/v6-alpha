@@ -1,7 +1,6 @@
 ﻿package Pugs::Grammar::Infix;
 use strict;
 use warnings;
-#use base qw(Pugs::Grammar::Operator);
 use Pugs::Grammar::Operator;
 use base qw(Pugs::Grammar::BaseCategory);
 
@@ -75,15 +74,6 @@ BEGIN {
         other => '..',
     );
 
-    # XXX - BUG - collision with &name
-    
-    #__PACKAGE__->add_rule( 
-    #    name => '&',
-    #    assoc => 'left',
-    #    precedence => 'equal',
-    #    other => 'infix:<|>',
-    #);
-
     __PACKAGE__->add_rule( 
         name => 'eq',
         assoc => 'chain',
@@ -119,7 +109,7 @@ BEGIN {
         precedence => 'looser',
         other => '||',
     );
-    __PACKAGE__->add_same_precedence_ops({ assoc => 'right'}, qw(= := ::= => += -= **= xx= .= ~= =~) );
+    __PACKAGE__->add_same_precedence_ops({ assoc => 'right'}, qw(= := ::= => += -= **= xx= x= .= ~= =~) );
 
 
     __PACKAGE__->add_rule( 
@@ -136,6 +126,12 @@ BEGIN {
     );
     __PACKAGE__->add_rule( 
         name => ',',
+        assoc => 'list',
+        precedence => 'equal',
+        other => 'Y',
+    );
+    __PACKAGE__->add_rule( 
+        name => ';',
         assoc => 'list',
         precedence => 'equal',
         other => 'Y',
@@ -166,29 +162,6 @@ BEGIN {
         precedence => 'equal',
         other => 'or',
     );
-    
-    #__PACKAGE__->add_rule( 
-    #    name => ';',
-    #    assoc => 'list',
-    #    precedence => 'looser',
-    #    other => 'or',
-    #);
-    
-    # '->' is not an operator
-    #__PACKAGE__->add_rule( 
-    #    name => '->',
-    #    assoc => 'non',
-    #    precedence => 'equal',
-    #    other => ';',
-    #);
-
-    # experimental
-    #__PACKAGE__->add_rule( 
-    #    name => 'IF',
-    #    assoc => 'non',
-    #    precedence => 'tighter',
-    #    other => ';',
-    #);
 
     __PACKAGE__->recompile;
 }

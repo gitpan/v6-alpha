@@ -49,3 +49,13 @@ sub require_use_helper(Bool $is_use, $module) { ... }
 sub runInteractiveCommand($command) { ... }
 sub sprintf($conversion, @arg) { ... } #bad signature
 sub use($module) { ... }
+
+use Pugs::Runtime::Perl6AST;
+# module v6::AST;
+#
+# $INC{"v6/AST.pm"}=1;  # mark this module as "used"
+#
+# sub node( $match, $type ) {
+#    #say "new node $match $type\n";
+#    $match;
+# }

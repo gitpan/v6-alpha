@@ -18,59 +18,42 @@ BEGIN {
         grammar => 'Pugs::Grammar::Operator',
         header  => q!
   
-attr:
-        #empty  
-        { $_[0]->{out}= { attribute => [] } }
-    |   BAREWORD  BAREWORD  attr
-        { $_[0]->{out}= {
-            attribute => [ 
-                [$_[1], $_[2],],
-                @{$_[3]{attribute}}, 
-            ], 
-        } }
-    ;
-      
 exp: 
       NUM                 
-        { $_[0]->{out}= $_[1] }
+        { $_[0]->{out} = $_[1] }
 
     | BAREWORD
-        { $_[0]->{out}= { op1 => 'call', sub => $_[1], } }
-    | BAREWORD exp   %prec P001
-        { $_[0]->{out}= { op1 => 'call', sub => $_[1], param => $_[2], } }
+        { $_[0]->{out} = {  op1    => 'call', 
+                            sub    => $_[1], } }
+    | BAREWORD exp       %prec P001
+        { $_[0]->{out} = {  op1    => 'call', 
+                            sub    => $_[1], 
+                            param  => $_[2], } }
  
-    | REDUCE exp   %prec P001
-        { $_[0]->{out}= { %{$_[1]}, param => $_[2], } }
+    | REDUCE exp         %prec P001
+        { $_[0]->{out} = {  %{$_[1]}, 
+                            param  => $_[2], } }
        
     | DOT_BAREWORD exp   %prec P001
-        { $_[0]->{out}= { op1 => 'method_call', self => { 'scalar' => '$_' }, method => $_[1], param => $_[2], } }
+        { $_[0]->{out} = {  op1    => 'method_call', 
+                            self   => { 'scalar' => '$_' }, 
+                            method => $_[1], 
+                            param  => $_[2], } }
     | DOT_BAREWORD   
-        { $_[0]->{out}= { op1 => 'method_call', self => { 'scalar' => '$_' }, method => $_[1], } }
-
-    | MY NUM attr       
-        { $_[0]->{out}= { 
-            op1 => { op => $_[1]{op} }, 
-            fixity => 'prefix', 
-            exp1 => $_[2],
-            %{$_[3]}, } }
-    | MY BAREWORD NUM attr 
-        { $_[0]->{out}= { 
-            op1 => { op => $_[1]{op} }, 
-            fixity => 'prefix', 
-            exp1 => $_[3],
-            type => { bareword => $_[2], },
-            %{$_[4]}, } }
+        { $_[0]->{out} = {  op1    => 'method_call', 
+                            self   => { 'scalar' => '$_' }, 
+                            method => $_[1], } }
 
 !,
     );
-    # print "created operator table\n";
+    #print "created operator table\n";
 }
 
 sub add_rule {
     # print "add operator\n";
     my $self = shift;
     my %opt = @_;
-    # print "Operator add: @{[ %opt ]} \n";
+    #print "Operator add: @{[ %opt ]} \n";
 
     delete $opt{rule};
     $operator->add_op( \%opt );
@@ -112,7 +95,16 @@ sub recompile {
         my $p;
         $p = $operator->emit_grammar_perl5;
         #print $p;
-        eval $p;
+        # $p contains 'Pugs::Grammar::Operator::new()'
+        # which calls 'Parse::Yapp::Driver::new()'
+
+        # *** cache initialization data to a global var
+        #print substr( $p, length($p)-1000 );
+        my ( $start, $data, $tail ) = $p =~ /^(.*?) ( yyversion .* \] ) (.*?)$/xs;
+        #print "$start \%yapp_data $tail";
+        our %yapp_data = eval $data;
+        eval $start . '%yapp_data' . $tail;
+        #eval $p;   
         #warn 'compiled grammar';
     }
 }
