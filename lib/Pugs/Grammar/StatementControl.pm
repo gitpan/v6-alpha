@@ -81,10 +81,11 @@ BEGIN {
         ) );
     __PACKAGE__->add_rule(
         'for' =>  q( 
-            # { print "statement for \n"; }
+            #{ print "statement for \n"; }
             <?ws> 
             $<exp1> := <Pugs::Grammar::Expression.parse('no_blocks',0)> <?ws>?
             $<exp2> := <Pugs::Grammar::Perl6.block>        
+            # { print "parsed so far: ", '!', $_[0], '!', Dumper( $_[0]->data ); }
             { return { 
                     statement => 'for',
                     exp1 => $_[0]{exp1}->(),
@@ -199,7 +200,7 @@ BEGIN {
                     statement => 'if',
                     exp1 => $_[0]{exp1}->(),
                     exp2 => $_[0]{exp2}->(),
-                    exp3 => $_[0]{exp3}->(),
+                    exp3 => [ $_[0]{exp3}->() ],
                 } }
         |
             <?ws>? elsif <?ws>? 
@@ -212,9 +213,8 @@ BEGIN {
                     statement => 'if',
                     exp1 => $_[0]{exp1}->(),
                     exp2 => $_[0]{exp2}->(),
-                    exp3 => $_[0]{exp3}->(),
-                    exp4 => $_[0]{exp4}->(),
-                    exp5 => $_[0]{exp5}->(),
+                    exp3 => [ [ $_[0]{exp3}->(), $_[0]{exp4}->() ],
+                              $_[0]{exp5}->() ],
                 } }
                 
                 # TODO: elsif ...
@@ -223,8 +223,7 @@ BEGIN {
                     statement => 'if',
                     exp1 => $_[0]{exp1}->(),
                     exp2 => $_[0]{exp2}->(),
-                    exp3 => $_[0]{exp3}->(),
-                    exp4 => $_[0]{exp4}->(),
+                    exp3 => [ [$_[0]{exp3}->(), $_[0]{exp4}->() ] ],
                 } }
             ]
         |

@@ -13,11 +13,13 @@ use Pugs::Compiler::Token;
 
 our %hash;
 
-*cpan_bareword = Pugs::Compiler::Regex->compile( '
-    ([_\w\d\:]+ \- [_\w\d\-\.*]+) 
-    (?= \( | \; | \s | $ ) 
-', 
-    { Perl5 => 1 } 
+*cpan_bareword = Pugs::Compiler::Token->compile( '
+    [ _ | <?alnum> | \: ]+ 
+    \- 
+    [ _ | <?alnum> | \- | \. | \* ]+ 
+    <before \( | \; | \s | $ > 
+',
+    { grammar => __PACKAGE__ }
 )->code;
 
 *perl5source = Pugs::Compiler::Regex->compile( q(
@@ -109,7 +111,7 @@ sub rx_body {
         # \.?     # $.x  - XXX causes problems with 1..5 for some reason
         \:?     # $:x
         [
-            [ \:\: ]?
+            [ <'::'> | <null> ]
             [ _ | <?alpha> ]
             [ _ | <?alnum> ]*
         ]+
@@ -119,15 +121,15 @@ sub rx_body {
 
 *bare_ident = Pugs::Compiler::Token->compile( q(
         [
-            [ \:\: ]?
+            [ <'::'> | <null> ]
             [ _ | <?alpha> ]
             [ _ | <?alnum> ]*
         ]+
 ) )->code;
 
-*parenthesis = Pugs::Compiler::Token->compile( q(
+*parenthesis = Pugs::Compiler::Token->compile( q^
                 <?ws>? <Pugs::Grammar::Expression.parse('allow_semicolon', 1)> <?ws>? 
-                <'\)'>
+                <')'>
                 { return {
                     op1 => { op => "(" },
                     op2 => { op => ")" },
@@ -136,7 +138,7 @@ sub rx_body {
                 } }
             |
                 <?ws>? <Pugs::Grammar::Perl6.block> <?ws>? 
-                <'\)'>
+                <')'>
                 { return {
                     op1 => { op => "(" },
                     op2 => { op => ")" },
@@ -145,13 +147,13 @@ sub rx_body {
                 } }
             |
                 <?ws>? 
-                <'\)'>
+                <')'>
                 { return {
                     op1 => { op => "(" },
                     op2 => { op => ")" },
                     fixity => "circumfix",
                 } }
-) )->code;
+^ )->code;
 
 *brackets = Pugs::Compiler::Token->compile( q(
                 <Pugs::Grammar::Infix.parse> 
@@ -202,6 +204,17 @@ sub recompile {
                 <?Pugs::Grammar::Term.ident>
                 { return { scalar => '$.' . $_[0]->() ,} }
             ),
+        '$/' => q(
+                { return { scalar => '$/' ,} } 
+            ),
+        '$()' => q(
+                { return { 
+                      'op1' => 'call',
+                      'sub' => {
+                        'scalar' => '$/'
+                      }
+                } }
+            ),
         '$<' => q(
                 ( <?Pugs::Grammar::Term.ident> ) \>
                 { return { scalar => { match_variable => $_[0][0]->() ,} } }
@@ -217,6 +230,14 @@ sub recompile {
         '%' => q(
                 <?Pugs::Grammar::Term.ident>
                 { return { hash  => "\%" . $_[0]->() ,} }
+            ),
+        '%(' => q(
+                <Pugs::Grammar::Term.parenthesis>
+                { return {
+                    'exp1' => $/{'Pugs::Grammar::Term.parenthesis'}(),
+                    'fixity' => 'prefix',
+                    'op1' => { 'op' => 'hash', }
+                } }
             ),
         '&' => q(
                 <?Pugs::Grammar::Term.ident>
@@ -239,8 +260,9 @@ sub recompile {
             |
                 <?ws>? <Pugs::Grammar::Perl6.statements> <?ws>? <'}'>
                 { 
-                  return { 
-                    bare_block => $_[0]{'Pugs::Grammar::Perl6.statements'}->(),
+                    #print "Term block\n";
+                    return { 
+                        bare_block => $_[0]{'Pugs::Grammar::Perl6.statements'}->(),
                 } }
             ),
         '->' => q( 
@@ -444,6 +466,10 @@ sub recompile {
             |
                 <Pugs::Grammar::Perl6.sub_decl>
                     { return $_[0]{'Pugs::Grammar::Perl6.sub_decl'}->();
+                    }
+            |
+                <Pugs::Grammar::Perl6.rule_decl>
+                    { return $_[0]{'Pugs::Grammar::Perl6.rule_decl'}->();
                     }
             |
                 <Pugs::Grammar::Perl6.class_decl>

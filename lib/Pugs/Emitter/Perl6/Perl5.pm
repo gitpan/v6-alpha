@@ -10,6 +10,7 @@ $Data::Dumper::Indent = 1;
 use Pugs::Emitter::Rule::Perl5::Ratchet;
 use Pugs::Runtime::Common;
 use Digest::MD5 'md5_hex';
+use Pugs::Runtime::Perl6; 
 
 # TODO - finish localizing %_V6_ENV at each block
 our %_V6_ENV;
@@ -39,8 +40,10 @@ sub _var_get {
         if ( exists $n->{bare_block} ) {
             my $block = _emit( $n );
             # TODO - check if it is a comma-delimited list
-            # print "block: [$block]\n";
-            return $block if $block =~ /# hash\n$/s;
+            #print "block: [$block]\n";
+            return $block 
+                if $block =~ / \# \s* hash \s* \n \s* }? \s* $/xs;
+            #print "sub: [$block]\n";
             return ' sub ' . $block;
         }
         return _emit( $n );
@@ -145,6 +148,14 @@ sub _emit_double_quoted {
                      grep { length $_ } @strings);
 }
 
+sub _emit_angle_quoted {
+    my $n = $_[0];
+    return "qw($n)" unless $n =~ /[()]/;
+    return "qw!$n!" unless $n =~ /[!]/;
+    return "qw^$n^" unless $n =~ /[\^]/;
+    die "can't quote string [$n]";
+}
+
 sub _emit {
     my $n = $_[0];
     #die "_emit: ", Dumper( $n ); 
@@ -193,13 +204,13 @@ sub _emit {
     return _var_get( $n )
         if exists $n->{hash};
         
-    return _emit_double_quoted($n->{double_quoted})
+    return _emit_double_quoted( $n->{double_quoted} )
         if exists $n->{double_quoted};
             
     return '\'' . $n->{single_quoted} . '\'' 
         if exists $n->{single_quoted};
             
-    return 'qw(' . $n->{angle_quoted} . ')' 
+    return _emit_angle_quoted( $n->{angle_quoted} )
         if exists $n->{angle_quoted};
             
     return $n->{perl5source}  
@@ -473,7 +484,7 @@ sub _emit_closure {
     return " Data::Bind->sub_signature( sub {" .
         "   my %_V6_PAD;\n" .
         _emit_parameter_binding( $signature ) .
-        _emit( $block ) .
+        emit_block_nobraces( $block ) .
     "\n }, "._emit_parameter_signature( $signature ).")\n";
 }
 
@@ -491,7 +502,7 @@ sub default {
     if ( exists $n->{op1} && $n->{op1} eq 'call' ) {
         # warn "call: ",Dumper $n;
 
-        if ($n->{sub}{scalar} || $n->{sub}{statement}) {
+        if ($n->{sub}{scalar} || $n->{sub}{exp1} || $n->{sub}{statement}) {
             return _emit($n->{sub}). '->(' . 
                 _emit_parameter_capture( $n->{param} ) . ')';
         }
@@ -612,7 +623,10 @@ sub default {
             if ($subname eq '!' || $subname eq 'not') {
                 return $subname.' '._emit($n->{param});
             }
-            if ($subname eq 'ref') {
+            if ($subname eq 'WHAT') {
+                # WHAT  was .ref
+                # WHICH was .id was .SKID
+                # HOW (class) was .META
                 return 'Pugs::Runtime::Perl6::Scalar::ref( \\'. _emit( $n->{param} ) . ')';
             }
             # runtime thunked builtins
@@ -691,8 +705,8 @@ sub default {
                 if $n->{self}{scalar} =~ /^\$\./;
             
             # $scalar.++;
-            return _emit( $n->{method} ) . emit_parenthesis( $n->{self} )
-                if $n->{method}{dot_bareword} eq 'ref';
+            return 'ref' . emit_parenthesis( $n->{self} )
+                if $n->{method}{dot_bareword} eq 'WHAT';  # "ref"
             # runtime decision - method or lib call
             return runtime_method( $n );
         }
@@ -702,7 +716,7 @@ sub default {
             if ($n->{method}{dot_bareword} eq 'kv') {
                 return _emit( $n->{self}); # just use it as array
             }
-            if ($n->{method}{dot_bareword} eq 'ref') {
+            if ($n->{method}{dot_bareword} eq 'WHAT') {
                 return 'Pugs::Runtime::Perl6::Scalar::ref( \\'. _emit( $n->{self} ) . ')';
             }
             if ($n->{method}{dot_bareword} eq 'isa') {
@@ -744,7 +758,7 @@ sub default {
             if ($n->{method}{dot_bareword} eq 'values') {
                 return emit_parenthesis( $n->{self} );
             }
-            if ($n->{method}{dot_bareword} eq 'ref') {
+            if ($n->{method}{dot_bareword} eq 'WHAT') {
                 return 'Pugs::Runtime::Perl6::Scalar::ref( \\'. _emit( $n->{self} ) . ')';
             }
             if ($n->{method}{dot_bareword} eq 'isa') {
@@ -795,12 +809,27 @@ sub statement {
     my $n = $_[0];
     #warn "statement: ", Dumper( $n );
     
-    if ( $n->{statement} eq 'if'     || 
+    if ( # XXX: obsoleted, fix unless to use new structure
          $n->{statement} eq 'unless' ) {
         return  " " . $n->{statement} . 
                 emit_parenthesis( $n->{exp1} ) .
                 emit_block( $n->{exp2} ) . "\n" .
                 ( $n->{exp3} ? " else" . emit_block( $n->{exp3} ) : '' );
+    }
+    if ( $n->{statement} eq 'if' ) {
+        my $ret = $n->{statement} .
+                emit_parenthesis( $n->{exp1} ) .
+                emit_block( $n->{exp2} ) . "\n";
+	for (@{$n->{exp3} || []}) {
+	    if (ref($_) eq 'ARRAY') {
+		$ret .= 'elsif '.emit_parenthesis( $_->[0] ) .
+		    emit_block( $_->[1] ) . "\n";
+	    }
+	    else {
+		$ret .= 'else '. emit_block( $_ ) . "\n";
+	    }
+	}
+	return $ret;
     }
 
     if ( $n->{statement} eq 'do' ) {
@@ -886,6 +915,15 @@ sub autoquote {
         return "'" . $n->{'sub'}{'bareword'} . "'";
     }
     return _emit( $n );
+}
+
+sub emit_sub_name {
+    my $n = $_[0];
+    #print "sub name: ", Dumper( $n );
+    my $name = Pugs::Runtime::Common::mangle_ident( $n->{name} );
+    return $name
+        unless $n->{category};
+    return _emit( $n->{name} );
 }
 
 sub term {
@@ -982,7 +1020,7 @@ sub term {
         my %old_env = %{ deep_copy( \%_V6_ENV ) };
         local %_V6_ENV = %old_env;
 
-        my $name = Pugs::Runtime::Common::mangle_ident( $n->{name} );
+        my $name = emit_sub_name( $n );
 
         my $export = '';
         for my $attr ( @{$n->{attribute}} ) {
@@ -1001,6 +1039,10 @@ sub term {
                 $multi_sub = "BEGIN { Sub::Multi->add_multi('$wrapper_name', \\&$name) }\n";
             }
             # XXX: check incompatible attributes
+
+            return "$name = "._emit_closure($n->{signature}, $n->{block}) 
+                if $n->{category};
+        
             return "local *$name = "._emit_closure($n->{signature}, $n->{block}) 
                 if $n->{my};
 
@@ -1028,8 +1070,8 @@ sub term {
          $n->{term} eq 'regex' ) {
         #warn "rule: ",Dumper $n;
 
-        my $name = Pugs::Runtime::Common::mangle_ident( $n->{name} );
-
+        my $name = emit_sub_name( $n );
+        
         my $export = '';
         for my $attr ( @{$n->{attribute}} ) {
             if ( $attr->[0]{bareword} eq 'is' &&
@@ -1038,15 +1080,66 @@ sub term {
             }
         }
 
-        my $perl5 = Pugs::Emitter::Rule::Perl5::Ratchet::emit( 
-            'Pugs::Grammar::Base', 
-            $n->{block}, 
-            {},   # options
-        );
-        $perl5 =~ s/^sub/sub $name/ if $name;
+        my $perl5;
+        
+        for my $attr ( @{$n->{attribute}} ) {
+            if ( $attr->[0]{bareword} eq ':P5' ) {
+                die "TODO: regex :P5 {...}";
+            }
+        }
+        
+        if ( $n->{term} eq 'regex' ) {
+            $perl5 = Pugs::Emitter::Rule::Perl5::emit( 
+                'Pugs::Grammar::Base', 
+                $n->{block}, 
+                {},   # options
+            );
+        }
+        else {
+            $perl5 = Pugs::Emitter::Rule::Perl5::Ratchet::emit( 
+                'Pugs::Grammar::Base', 
+                $n->{block}, 
+                {},   # options
+            );
+        }
+        
+        if ( $n->{category} ) {
+            # XXX - signature, exports are currently disabled, need more work
+            $perl5 =~ s/
+              my \s+ \$grammar \s+ = .*? ; \s+
+              my \s+ \$s       \s+ = .*? ;
+            /
+              my \$s       = \$_[0] || '';
+              my \$grammar = \$_[1] || __PACKAGE__;
+            /sx;
+            return "$name = $perl5";
+        }
+        elsif ( $name ) {
+            $perl5 =~ s/
+              (my \s+ \$grammar)
+            /
+              \$_[3] = \$_[2]; 
+              \$_[2] = undef;
+              $1
+            /sx;
+            $perl5 = "*$name = $perl5";
+        }
+        else {
+            $perl5 =~ s/
+              my \s+ \$grammar \s+ = .*? ; \s+
+              my \s+ \$s       \s+ = .*? ;
+            /
+              my \$s       = \$_[0] || '';
+              my \$grammar = \$_[1] || __PACKAGE__;
+              \$_[3] = \$_[2]; 
+              \$_[2] = undef;
+            /sx;
+            return $perl5;
+        }
+        
         # TODO - _emit_parameter_binding( $n->{signature} ) .
         return  $export .
-                $perl5 .
+                $perl5 . ";" .
                 "## Signature for $name\n" .
                 " Data::Bind->sub_signature\n".
                 " (\\&$name, ". _emit_parameter_signature ( $n->{signature} ) . ");\n";
@@ -1275,15 +1368,26 @@ sub postcircumfix {
         my $name = _emit( $n->{exp1} );
         #$name =~ s/^\%/\$/;
 
+        # $/<x>
+        return " " . _emit( $n->{exp1} ) . 
+            '->{ ' . _emit_angle_quoted( $n->{exp2}{angle_quoted} ) . ' }'
+            if exists $n->{exp1}{scalar};
+
         # looks like a hash slice
         $name =~ s/^(?: \% | \$ ) / \@ /x;
 
-        return $name . '{ qw(' . $n->{exp2}{angle_quoted} . ') }';
+        return $name . '{ ' . _emit_angle_quoted( $n->{exp2}{angle_quoted} ) . ' }';
     }
 
     if ( $n->{op1}{op} eq '{' &&
          $n->{op2}{op} eq '}' ) {
         my $name = _emit( $n->{exp1} );
+
+        # $/{'x'}
+        return " " . _emit( $n->{exp1} ) . 
+            '->{' . _emit( $n->{exp2}{statements}[0] ) . '}'
+            if exists $n->{exp1}{scalar};
+
         # die "trying to emit ${name}{exp}" unless $name =~ m/^\%/;
         #print "postcircumfix{} ",Dumper( $n->{exp2}{statements} );
         if (  exists $n->{exp2}{statements}[0]{list}
@@ -1313,6 +1417,10 @@ sub prefix {
     
     if ( $n->{op1}{op} eq ':' ) {
         return _emit( $n->{exp1} ) . "  # XXX :\$var not implemented\n";
+    }
+    
+    if ( $n->{op1}{op} eq 'hash' ) {
+        return '%{' . _emit( $n->{exp1} ) . '}';
     }
     
     if ( $n->{op1}{op} eq 'do' ) {

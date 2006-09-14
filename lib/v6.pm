@@ -1,5 +1,5 @@
 package v6;
-$v6::VERSION = '0.014';
+$v6::VERSION = '0.015';
 
 # Documentation in the __END__
 use 5.006;
@@ -7,7 +7,7 @@ use strict;
 use warnings;
 use Module::Compile-base;
 use File::Basename;
-use Pugs::Runtime::Perl6;
+# use Pugs::Runtime::Perl6;
 
 my $bin;
 BEGIN { $bin = ((dirname(__FILE__) || '.') . "/..") };
@@ -31,6 +31,8 @@ sub pmc_parse_blocks {
 
 sub pmc_filter {
     my ($class, $module, $line_number, $post_process) = @_;
+    return 
+        if $module eq '-e';
     $class->SUPER::pmc_filter($module, 0, $post_process);
 }
 
@@ -72,6 +74,7 @@ sub pmc_compile {
         $perl5 . "\n" .
         "; 1;\n";
 
+    unless ( $ENV{V6NOTIDY} )
     {
       # Perl::Tidy is used if available
       local $@;   # don't care if there are errors here
@@ -131,6 +134,51 @@ if (@ARGV and !caller) {
         exit 0;
     }
 }
+elsif ( $0 eq '-e' ) {
+    # perl -Ilib -e 'use v6-alpha' ' "hello world".say '
+    # perl -Ilib -e 'use v6-alpha' - ' "hello world".say '
+    # perl -Ilib -e 'use v6-alpha' - --compile-only ' "hello world".say '
+    # perl -Ilib -e 'use v6-alpha' - -Ilib6 ' "hello world".say '
+    # echo 42.say | perl -Ilib -e 'use v6-alpha' 
+    
+    #print "Compile [$0] [@ARGV]\n";
+    my ($compile_only, $code);
+
+    shift(@ARGV) if $ARGV[0] && $ARGV[0] eq '-';
+
+    if ($ARGV[0] && $ARGV[0] eq '--compile-only') {
+        shift(@ARGV);
+        $compile_only++;
+    }
+
+    shift(@ARGV) if $ARGV[0] && $ARGV[0] =~ /^--pugs/;
+    shift(@ARGV) if $ARGV[0] && $ARGV[0] =~ /^-Bperl5$/i;
+    splice(@ARGV, 0, 2) if $ARGV[0] && $ARGV[0] =~ /^-B$/;
+
+    while (@ARGV and $ARGV[0] =~ /^-(\w)(.+)/) {
+        use Config;
+        $ENV{PERL6LIB} = "$2$Config{path_sep}$ENV{PERL6LIB}" if $1 eq 'I';
+        shift @ARGV;
+    }
+
+    if (@ARGV) {  # and $ARGV[0] =~ s/^-e//) {
+        $code = (length($ARGV[0]) ? $ARGV[0] : $ARGV[1]);
+    }
+    else {
+        local $/;
+        $code = <>;
+    }
+
+    if ($compile_only) {
+        print __PACKAGE__->pmc_compile($code);
+    }
+    else {
+        local $@;
+        eval __PACKAGE__->pmc_compile($code);
+        die $@ if $@;
+        exit 0;
+    }
+}
 
 1;
 
@@ -142,21 +190,25 @@ v6 - An experimental Perl 6 implementation
 
 =head1 SYNOPSIS
 
-Command line:
-
-    $ perl -Ilib lib/v6.pm -e 'for 1,2,3 -> $x { say $x }'
-
-Compile-only:
-
-    $ perl -Ilib lib/v6.pm --compile-only -e '<hello>.say;'
-
-Script or module:
-
     # file: hello_world.pl
     use v6-alpha;
     "hello, world".say;
 
     $ perl hello_world.pl
+
+C<v6-alpha> can be used in one-liners:
+
+    $ perl -e 'use v6-alpha' ' 42.say '
+    $ perl -e 'use v6-alpha' - ' 42.say '
+    $ perl -e 'use v6-alpha' - --compile-only ' 42.say '
+    $ perl -e 'use v6-alpha' - -Ilib6 ' 42.say '
+    $ echo 42.say | perl -e 'use v6-alpha' 
+
+C<v6.pm> can also be used as a plain program. 
+This examples assume that v6.pm is in the C<./lib> directory:
+
+    $ perl lib/v6.pm -e 'for 1,2,3 -> $x { say $x }'
+    $ perl lib/v6.pm --compile-only -e '<hello>.say;'
 
 =head1 DESCRIPTION
 
@@ -215,6 +267,30 @@ If you see the error below, it may happen that your perl was compiled without PM
   Can't locate object method "compile" via package "Pugs::Compiler::Perl6"
 
 Please see L<http://rt.cpan.org/Public/Bug/Display.html?id=20152>
+
+=head1 ENVIRONMENT VARIABLES
+
+* PERL6LIB
+
+Same usage as PERL5LIB - sets the search path for Perl 6 modules.
+
+* V6DUMPAST
+
+If set, the compiler will dump the syntax tree to C<STDOUT> just before emitting code, using C<Data::Dumper>.
+
+* V6NOTIDY
+
+If set, the compiler output will be much less readable, but there will
+be some improvement in compiler speed.
+
+=head1 COMMAND LINE SWITCHES
+
+* --compile-only
+
+When using v6.pm from the command line, dumps the emitted code
+to C<STDOUT> and then exit:
+
+    $ perl -Ilib lib/v6.pm --compile-only -e '<hello>.say;'
 
 =head1 AUTHORS
 
