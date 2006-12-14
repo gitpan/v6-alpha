@@ -1,119 +1,58 @@
 ﻿package Pugs::Grammar::Prefix;
 use strict;
 use warnings;
-#use base qw(Pugs::Grammar::Operator);
 use Pugs::Grammar::Operator;
 use base qw(Pugs::Grammar::BaseCategory);
-
 use Pugs::Grammar::Infix;
-
-# TODO - generate AST
-# TODO - prefix:{'+'}
-# TODO - ~ ? 
 
 sub add_rule {
     my $self = shift;
     my %opt = @_;
+    my $name2 = $opt{name};
+    $name2 =~ s/\\/\\\\/g;
+    #print "Add Prefix $name2 \n";
     $self->Pugs::Grammar::Operator::add_rule( %opt,
         fixity => 'prefix', 
         assoc => 'non',
+        name => $name2,
     );
     $self->Pugs::Grammar::Operator::add_rule( %opt,
         precedence => 'equal',
-        other  => $opt{name},
+        other  => $name2,
         fixity => 'prefix', 
         assoc => 'non',
-        name => 'prefix:<' . $opt{name} . '>',
+        name => 'prefix:<' . $name2 . '>',
     );
+    my $name = quotemeta( $opt{name} );
     $self->SUPER::add_rule( 
         $opt{name}, 
-        '{ return { op => "' . $opt{name} . '" ,} }' );
+        '{ return { op => "' . $name . '" ,} }' );
     $self->SUPER::add_rule( 
         "prefix:<" . $opt{name} . ">",
-        '{ return { op => "prefix:<' . $opt{name} . '>" ,} }' );
+        '{ return { op => "prefix:<' . $name . '>" ,} }' );
 }
 
+
+sub add_same_precedence_ops {
+    my ($class, $opt, $other, @ops) = @_;
+    $class->add_rule(other => $other, precedence => 'equal', name => $_, %$opt) for @ops;
+}
 
 BEGIN {
     __PACKAGE__->add_rule( 
         name => '+',
         assoc => 'left',
         precedence => 'tighter',
-        other => '*',
+        other => 'infix:<*>',
     );
-    __PACKAGE__->add_rule(
-        name => '-',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    __PACKAGE__->add_rule(
-        name => '?',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    __PACKAGE__->add_rule(
-        name => '~',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    __PACKAGE__->add_rule(
-        name => '@',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    __PACKAGE__->add_rule(
-        name => '&',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    __PACKAGE__->add_rule(
-        name => '!',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    __PACKAGE__->add_rule(
-        name => '*',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    __PACKAGE__->add_rule(
-        name => ':',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    __PACKAGE__->add_rule(
-        name => '=',
-        assoc => 'left',
-        precedence => 'equal',
-        other => 'prefix:<+>',
-    );
-    
-    #__PACKAGE__->add_rule(
-    #    name => 'say',
-    #    assoc => 'left',
-    #    precedence => 'looser',
-    #    other => 'infix:<,>',
-    #);
-    #__PACKAGE__->add_rule(
-    #    name => 'substr',
-    #    assoc => 'left',
-    #    precedence => 'equal',
-    #    other => 'prefix:<say>',
-    #);
-    
+    __PACKAGE__->add_same_precedence_ops( { assoc => 'left'}, 'prefix:<+>', qw(
+        - ? ~ @ % $ & ! * : = \\
+    ) );
     __PACKAGE__->add_rule( 
         name => '++',
         assoc => 'left',
         precedence => 'tighter',
-        other => '*',
+        other => 'prefix:<+>',
     );
     __PACKAGE__->add_rule(
         name => '--',
@@ -121,14 +60,7 @@ BEGIN {
         precedence => 'equal',
         other => 'prefix:<++>',
     );
-
     # experimental
-    __PACKAGE__->add_rule(
-        name => 'do',
-        assoc => 'non',
-        precedence => 'equal',
-        other => 'infix:<+>',
-    );
     __PACKAGE__->add_rule(
         name => 'try',
         assoc => 'non',

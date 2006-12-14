@@ -9,7 +9,6 @@ use warnings;
 use base 'Pugs::Compiler::Regex';
 use Pugs::Grammar::Perl6;
 use Pugs::Compiler::Token;
-use Pugs::Emitter::Perl6::Perl5;
 use Carp;
 # use Scalar::Util 'blessed';
 use Data::Dumper;
@@ -27,10 +26,31 @@ sub compile {
                         'Pugs::Grammar::Perl6';
     $self->{p}        = delete $param->{pos}      ||
                         delete $param->{p};
+    $self->{backend}  = delete $param->{backend}  ||
+                        'perl5';
+
     warn "Error in compile: unknown parameter '$_'" 
         for keys %$param;
     #print 'rule source: ', $self->{source}, "\n";
     local $@;
+
+    $self->{backend}  = 'perl5:Pugs::Emitter::Perl6::Perl5'
+        if $self->{backend} eq 'perl5';
+    $self->{backend} =~ s/^perl5://;
+    #print "backend: ", $self->{backend}, "\n";
+    eval " require $self->{backend} ";
+        if ( $@ ) {
+            carp "Error loading backend module: $@";
+            return;
+        }
+
+    $self->{grammar} =~ s/^perl5://;
+    #print "grammar: ", $self->{grammar}, "\n";
+    eval " require $self->{grammar} ";
+        if ( $@ ) {
+            carp "Error loading grammar module: $@";
+            return;
+        }
 
     # in order to reduce the memory footprint:
     #       loop parsing '<ws> <statement>'; 
@@ -38,9 +58,47 @@ sub compile {
     # AST = { statements => \@statement }
 
     my $source = $self->{source};
+    my $pos = $self->{p} || 0;
+
+    # generic grammar?
+    if ( $self->{grammar} ne 'Pugs::Grammar::Perl6' ) {
+
+        #print "Parsing $self->{grammar} \n";
+        eval {
+            no strict 'refs';
+            $self->{ast} = &{$self->{grammar} . '::parse'}( $self->{grammar}, $source, { pos => $pos } );
+            $pos = $self->{ast}->to if $self->{ast};
+        };
+        #print "Done Parsing $self->{grammar} \n";
+        #print Dumper( $self->{ast} );
+        if ( $@ ) {
+            carp "Error in parser: $@";
+            return;
+        }
+        elsif ( ! defined $self->{ast} ) {
+            carp "Error in parser: No match found";
+            return;
+        }
+        $self->{ast} = $self->{ast}->();
+
+        if ( $self->{ast} ) {
+            eval {
+                no strict 'refs';
+                $self->{perl5} = &{$self->{backend} . '::emit'}( 
+                    $self->{grammar}, $self->{ast}, $self );
+            };
+            {
+            no warnings 'uninitialized';
+            carp "Error in perl 5 emitter: $@\nSource:\n$self->{perl5}\n" if $@;
+            }
+            #print 'rule perl5: ', do{use Data::Dumper; Dumper($self->{perl5})};
+        }
+        bless $self, $class;
+
+    } # / generic grammar
+
     my @statement;
     my $error = 0;
-    my $pos = $self->{p} || 0;
 
     my $source_line_number = 1;
     my $source_pos = 0;
@@ -65,10 +123,10 @@ sub compile {
         last if $pos >= length( $source );
 
         eval {
-
             #print "<ws> until $pos; tail [",substr( $source, $pos, 10 ),"...]\n";
 
-            $self->{ast} = Pugs::Grammar::Perl6->statement( $source, { pos => $pos } );
+            no strict 'refs';
+            $self->{ast} = &{$self->{grammar} . '::statement'}( $self->{grammar}, $source, { pos => $pos } );
             #print 'match: ', Dumper( $self->{ast}() );
             #print 'match: ', Dumper( $self->{ast}->data );
             $pos = $self->{ast}->to if $self->{ast};
@@ -77,6 +135,12 @@ sub compile {
 
         if ( $@ ) {
             carp "Error in perl 6 parser: $@\nSource:\n'" .
+                 substr( $rule_source, 0, 30 ) . "...\n";
+            $error = 1;
+            last;
+        }
+        elsif ( ! defined $self->{ast} ) {
+            carp "Error in perl 6 parser: No match found for:\n'" .
                  substr( $rule_source, 0, 30 ) . "...\n";
             $error = 1;
             last;
@@ -102,7 +166,8 @@ sub compile {
 
     if ( @statement ) {
         eval {
-            $self->{perl5} = Pugs::Emitter::Perl6::Perl5::emit( 
+            no strict 'refs';
+            $self->{perl5} = &{$self->{backend} . '::emit'}( 
                 $self->{grammar}, $self->{ast}, $self );
         };
         {

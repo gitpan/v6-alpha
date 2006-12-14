@@ -1,4 +1,25 @@
 
+0.016  2006-12-14
+
+- command-line switch -B can be set to alternate backends.
+  The default is '-Bperl5:Pugs::Emitter::Perl6::Perl5'.
+  '-Bperl5' also invokes the default backend.
+- command-line switch -G can be set to alternate grammar frontends.
+  The default is '-Gperl5:Pugs::Grammar::Perl6'
+- implemented grammar and emitter backends for YAML
+  Perl6->YAML + YAML->Perl5 now works
+- added a version banner - perl lib/v6.pm -v
+- eval() in caller's context
+
+[devel only]
+
+- moved Perl5 emitter to a separate module
+- implemented $$/
+- implemented :c and :g switches in rules:
+  ' my $content = "xyz"; while $content ~~ m:c/<alpha>/ { say $/ } '
+  x \n y \n z \n
+- implemented  '$x.yaml'  and  'eval( $x, :lang<yaml> )'
+
 0.015  2006-09-14
 
 - improved command-line interface, does not require using v6.pm as a

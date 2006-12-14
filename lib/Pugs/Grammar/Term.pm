@@ -5,13 +5,16 @@ use base qw(Pugs::Grammar::BaseCategory);
 use Pugs::Runtime::Match;
 use Pugs::Compiler::Token;
 
-# TODO - implement the "magic hash" dispatcher
-# TODO - term:<...> !!! ??? 
-# moose=>1
-# moose:<elk>
-# moose:{antler()}
-
 our %hash;
+
+# <audreyt>
+# $infix:<plus>     plus => $infix<plus>
+# :$<foo> is a special case of that
+# :$/<foo> is not valid
+# $/:<foo> would be the currently specced equiv
+# another thought is to make :%h<foo> parse as foo=>%h<foo>
+# not (h=>%h)<foo> which is likely nonsensical
+
 
 *cpan_bareword = Pugs::Compiler::Token->compile( '
     [ _ | <?alnum> | \: ]+ 
@@ -22,8 +25,9 @@ our %hash;
     { grammar => __PACKAGE__ }
 )->code;
 
-*perl5source = Pugs::Compiler::Regex->compile( q(
-    (.*?) [ ; | <?ws> ] use <?ws> v6 (.)*? ; 
+*perl5source = Pugs::Compiler::Token->compile( q(
+    ( [ <!before [ ; | <?ws> ] use <?ws> v6 > . ]+ )
+    <-[ ;\}\)\] ]>* 
         { return { 
             perl5source => $_[0][0]->() 
         } }
@@ -105,18 +109,12 @@ sub rx_body {
 };
 
 *ident = Pugs::Compiler::Token->compile( q(
-        \!      # $!
-    |   \??     # $?CALLER
-        \*?     # $*x
-        # \.?     # $.x  - XXX causes problems with 1..5 for some reason
-        \:?     # $:x
+        <[ \? \* \: ]>?     # $?CALLER  $*x  $:x
         [
             [ <'::'> | <null> ]
             [ _ | <?alpha> ]
             [ _ | <?alnum> ]*
         ]+
-    |   <before \< | \[ | \{ >   # $<thing> == $/<thing>; $[thing] = $/[thing]
-    |   \/      # $/
 ) )->code;
 
 *bare_ident = Pugs::Compiler::Token->compile( q(
@@ -131,8 +129,8 @@ sub rx_body {
                 <?ws>? <Pugs::Grammar::Expression.parse('allow_semicolon', 1)> <?ws>? 
                 <')'>
                 { return {
-                    op1 => { op => "(" },
-                    op2 => { op => ")" },
+                    op1 => "(",
+                    op2 => ")",
                     fixity => "circumfix",
                     exp1 => $_[0]{'Pugs::Grammar::Expression.parse'}->() 
                 } }
@@ -140,8 +138,8 @@ sub rx_body {
                 <?ws>? <Pugs::Grammar::Perl6.block> <?ws>? 
                 <')'>
                 { return {
-                    op1 => { op => "(" },
-                    op2 => { op => ")" },
+                    op1 => "(",
+                    op2 => ")",
                     fixity => "circumfix",
                     exp1 => $_[0]{'Pugs::Grammar::Perl6.block'}->() 
                 } }
@@ -149,8 +147,8 @@ sub rx_body {
                 <?ws>? 
                 <')'>
                 { return {
-                    op1 => { op => "(" },
-                    op2 => { op => ")" },
+                    op1 => "(",
+                    op2 => ")",
                     fixity => "circumfix",
                 } }
 ^ )->code;
@@ -166,8 +164,8 @@ sub rx_body {
                 <?ws>? <Pugs::Grammar::Expression.parse> <?ws>? 
                 <']'>
                 { return {
-                    op1 => { op => "[" },
-                    op2 => { op => "]" },
+                    op1 => "[",
+                    op2 => "]",
                     fixity => "circumfix",
                     exp1 => $_[0]{'Pugs::Grammar::Expression.parse'}->() 
                 } }
@@ -175,8 +173,8 @@ sub rx_body {
                 <?ws>? <Pugs::Grammar::Perl6.block> <?ws>? 
                 <']'>
                 { return {
-                    op1 => { op => "[" },
-                    op2 => { op => "]" },
+                    op1 => "[",
+                    op2 => "]",
                     fixity => "circumfix",
                     exp1 => $_[0]{'Pugs::Grammar::Perl6.block'}->() 
                 } }
@@ -184,40 +182,93 @@ sub rx_body {
                 <?ws>? 
                 <']'>
                 { return {
-                    op1 => { op => "[" },
-                    op2 => { op => "]" },
+                    op1 => "[",
+                    op2 => "]",
                     fixity => "circumfix",
                 } }
 ) )->code;
+
+sub is_hash_or_pair {
+    # XXX - does %hash, {anon_hash}, hash() interpolate?
+    my $elem = $_[0];
+    ref( $elem )
+    &&    (  exists $elem->{pair}          #  :a<b>  :a  :!a
+          || exists $elem->{hash}          #  %hash
+          || exists $elem->{anon_hash}     #  {}  { 1 => 2 }
+          || (  exists $elem->{fixity}     #  a => 'b'
+             && $elem->{fixity} eq 'infix'
+             && $elem->{op1} eq '=>'
+             )
+          || (  exists $elem->{fixity}     #  %( 1, 2 )
+             && $elem->{fixity} eq 'prefix'
+             && $elem->{op1} eq '%'
+             )
+          || (  exists $elem->{sub}        #  pair( 1, 2 )  
+             && $elem->{sub}{bareword} eq 'pair'
+             && $elem->{op1} eq 'call'
+             )
+          || (  exists $elem->{sub}        #  hash( 1, 2 )
+             && $elem->{sub}{bareword} eq 'hash'
+             && $elem->{op1} eq 'call'
+             )
+          )
+    ? 1 : 0;
+}
 
 sub recompile {
     my $class = shift;
     %hash = (
         '$' => q(
-                [ <?Pugs::Grammar::Term.ident>
-                  { return { scalar => '$' . $_[0]->() ,} }
+                | <before <[  \{ \[ \< \« ]> >
+                  { return { scalar => '$/' ,} }
+                | \^ <?Pugs::Grammar::Term.ident>
+                  { return { scalar => '$' . $_[0] ,} }
+                | <?Pugs::Grammar::Term.ident>
+                  { return { scalar => '$' . $_[0] ,} }
                 | (\d+)
-                  { return { scalar => '$' . $_[0]->() ,} }
-                ]
+                  { return {                          
+                              'exp1' => {
+                                'scalar' => '$/'
+                              },
+                              'exp2' => {
+                                'int' => $/[0]()
+                              },
+                              'fixity' => 'postcircumfix',
+                              'op1' => '[',
+                              'op2' => ']',                    
+                        },   
+                  } 
             ),
         '$.' => q(
+                <?Pugs::Grammar::Term.ident>
+                { return { scalar => '$.' . $_[0]->() ,} }
+            ),
+        # XXX - Cheat - @.foo is turned into $.foo
+        '@.' => q(
+                <?Pugs::Grammar::Term.ident>
+                { return { scalar => '$.' . $_[0]->() ,} }
+            ),
+        '%.' => q(
                 <?Pugs::Grammar::Term.ident>
                 { return { scalar => '$.' . $_[0]->() ,} }
             ),
         '$/' => q(
                 { return { scalar => '$/' ,} } 
             ),
-        '$()' => q(
-                { return { 
-                      'op1' => 'call',
-                      'sub' => {
-                        'scalar' => '$/'
-                      }
-                } }
+        '$!' => q(
+                { return { scalar => '$!' ,} } 
             ),
-        '$<' => q(
-                ( <?Pugs::Grammar::Term.ident> ) \>
-                { return { scalar => { match_variable => $_[0][0]->() ,} } }
+        '$()' => q(
+                { return 
+                    {
+                      'exp1' => {
+                        'pos' => 2,
+                        'scalar' => '$/'
+                      },
+                      'fixity' => 'prefix',
+                      'op1' => '$',
+                    }
+                }
             ),
         '@' => q(
                 # XXX t/subroutines/multidimensional_arglists.t
@@ -227,17 +278,37 @@ sub recompile {
                 <?Pugs::Grammar::Term.ident>
                 { return { array => "\@" . $_[0]->() ,} }
             ),
+        '::' => q(
+                <?Pugs::Grammar::Term.ident>
+                { return { type => "\::" . $_[0]->() ,} }
+            ),
+        '@()' => q(
+                { return 
+                    {
+                      'exp1' => {
+                        'pos' => 2,
+                        'scalar' => '$/'
+                      },
+                      'fixity' => 'prefix',
+                      'op1' => '@',
+                    }
+                }
+            ),
         '%' => q(
                 <?Pugs::Grammar::Term.ident>
                 { return { hash  => "\%" . $_[0]->() ,} }
             ),
-        '%(' => q(
-                <Pugs::Grammar::Term.parenthesis>
-                { return {
-                    'exp1' => $/{'Pugs::Grammar::Term.parenthesis'}(),
-                    'fixity' => 'prefix',
-                    'op1' => { 'op' => 'hash', }
-                } }
+        '%()' => q(
+                { return 
+                    {
+                      'exp1' => {
+                        'pos' => 2,
+                        'scalar' => '$/'
+                      },
+                      'fixity' => 'prefix',
+                      'op1' => '%',
+                    }
+                }
             ),
         '&' => q(
                 <?Pugs::Grammar::Term.ident>
@@ -252,17 +323,47 @@ sub recompile {
                 { return $_[0]{'Pugs::Grammar::Term.brackets'}->() }
             ),
         '{' => q(
+                # S06 - Anonymous hashes vs blocks
+                # if it is completely empty 
                 <?ws>? <'}'>
                 { 
                   return { 
-                    bare_block => { statements => [] },
+                    anon_hash => { null => 1, },
                 } }
             |
+                # consists of a single list, first element is either a hash or a pair
                 <?ws>? <Pugs::Grammar::Perl6.statements> <?ws>? <'}'>
                 { 
                     #print "Term block\n";
+                    my $stmt = $_[0]{'Pugs::Grammar::Perl6.statements'}->();
+                    
+                    #print "Statements: ", Dumper($stmt);
+                    
+                    if ( scalar @{$stmt->{statements}} == 1 ) {
+                        my $list = $stmt->{statements}[0];
+                        if (  exists $list->{list} 
+                           && $list->{op1} eq ','
+                           ) {
+                            my $elem = $list->{list}[0];
+                            if ( Pugs::Grammar::Term::is_hash_or_pair( $elem ) ) {
+                                return { 
+                                    anon_hash => $list,
+                                }                                
+                            }
+                        }
+                        if ( Pugs::Grammar::Term::is_hash_or_pair( $list ) ) {
+                            return { 
+                                anon_hash => {
+                                    list => [ $list ],
+                                    assoc => 'list',
+                                    op1 => ',',
+                                }
+                            }                                
+                        }
+                    }
+                    
                     return { 
-                        bare_block => $_[0]{'Pugs::Grammar::Perl6.statements'}->(),
+                        bare_block => $stmt,
                 } }
             ),
         '->' => q( 
@@ -290,6 +391,18 @@ sub recompile {
         '...' => q(
             { return { term => "yada" } }
             ),
+        '???' => q(
+            { return { term => "???" } }
+            ),
+        '!!!' => q(
+            { return { term => "!!!" } }
+            ),
+        'Inf' => q(
+            { return { num => "Inf" } }
+            ),
+        'NaN' => q(
+            { return { num => "NaN" } }
+            ),
         'self' => q(
             { return { term => "self" } }
             ),
@@ -297,57 +410,67 @@ sub recompile {
             { return { term => "undef" } }
             ),
         'my' => q(
-            <?ws> <Pugs::Grammar::Term.parse>
+            <?ws> <Pugs::Grammar::Perl6.signature_term_type>
+            <?ws>? <Pugs::Grammar::Term.parse>
             <?ws>? <Pugs::Grammar::Perl6.attribute>
             { 
                 return { 
                     exp1 => $/{'Pugs::Grammar::Term.parse'}->(),
                     attribute  => $/{'Pugs::Grammar::Perl6.attribute'}->(),
                     variable_declarator => "my",
+                    type  => $/{'Pugs::Grammar::Perl6.signature_term_type'}->(),
                 } 
             }
             ),
         'our' => q(
-            <?ws> <Pugs::Grammar::Term.parse>
+            <?ws> <Pugs::Grammar::Perl6.signature_term_type>
+            <?ws>? <Pugs::Grammar::Term.parse>
             <?ws>? <Pugs::Grammar::Perl6.attribute>
             { 
                 return { 
                     exp1 => $/{'Pugs::Grammar::Term.parse'}->(),
                     attribute  => $/{'Pugs::Grammar::Perl6.attribute'}->(),
                     variable_declarator => "our",
+                    type  => $/{'Pugs::Grammar::Perl6.signature_term_type'}->(),
                 } 
             }
             ),
         'has' => q(
-            <?ws> <Pugs::Grammar::Term.parse>
+            <?ws> <Pugs::Grammar::Perl6.signature_term_type>
+            <?ws>? <Pugs::Grammar::Term.parse>
             <?ws>? <Pugs::Grammar::Perl6.attribute>
             { 
                 return { 
                     exp1 => $/{'Pugs::Grammar::Term.parse'}->(),
                     attribute  => $/{'Pugs::Grammar::Perl6.attribute'}->(),
                     variable_declarator => "has",
+                    type  => $/{'Pugs::Grammar::Perl6.signature_term_type'}->(),
                 } 
             }
             ),
         'state' => q(
-            <?ws> <Pugs::Grammar::Term.parse>
+            <?ws> <Pugs::Grammar::Perl6.signature_term_type>
+            <?ws>? <Pugs::Grammar::Term.parse>
             <?ws>? <Pugs::Grammar::Perl6.attribute>
             { 
                 return { 
                     exp1 => $/{'Pugs::Grammar::Term.parse'}->(),
                     attribute  => $/{'Pugs::Grammar::Perl6.attribute'}->(),
                     variable_declarator => "state",
+                    type  => $/{'Pugs::Grammar::Perl6.signature_term_type'}->(),
                 } 
             }
             ),
         'constant' => q(
-            <?ws> <Pugs::Grammar::Term.parse>
+            <?ws> <Pugs::Grammar::Perl6.signature_term_type>
+            <?ws>? <Pugs::Grammar::Term.parse>
             <?ws>? <Pugs::Grammar::Perl6.attribute>
             { 
                 return { 
                     exp1 => $/{'Pugs::Grammar::Term.parse'}->(),
                     attribute  => $/{'Pugs::Grammar::Perl6.attribute'}->(),
                     variable_declarator => "constant",
+                    type  => $/{'Pugs::Grammar::Perl6.signature_term_type'}->(),
                 } 
             }
             ),
@@ -412,7 +535,7 @@ sub recompile {
                 { return {
                     pair => { 
                         key   => { single_quoted => $/[0]() }, 
-                        value => { single_quoted => $/{'Pugs::Grammar::Quote.angle_quoted'}() }, 
+                        value => $/{'Pugs::Grammar::Quote.angle_quoted'}->(), 
                 } } }
             |
                 # :foo(exp)
@@ -432,6 +555,47 @@ sub recompile {
                     pair => { 
                         key   => { single_quoted => $/[0]() }, 
                         value => { scalar  => '$' . $/[0]() }, 
+                } } }
+            |
+                # :$<foo>
+                <'$<'> ((_|\w)+) \>
+                { return {
+                    pair => { 
+                        key   => { single_quoted => $/[0]() }, 
+                        value => {                         
+                              'exp1' => {
+                                'scalar' => '$/'
+                              },
+                              'exp2' => {
+                                'angle_quoted' => $/[0]()
+                              },
+                              'fixity' => 'postcircumfix',
+                              'op1' => '<',
+                              'op2' => '>',                    
+                        },                        
+                } } }
+            |
+                # :$$<foo>
+                <'$$<'> ((_|\w)+) \>
+                { return {
+                    pair => { 
+                        key   => { single_quoted => $/[0]() }, 
+                        value =>     
+                          {
+                          'exp1' => {
+                            'exp1' => {
+                              'scalar' => '$/'
+                            },
+                            'exp2' => {
+                              'angle_quoted' => $/[0]()
+                            },
+                            'fixity' => 'postcircumfix',
+                            'op1' => '<',
+                            'op2' => '>',
+                          },
+                          'fixity' => 'prefix',
+                          'op1' => '$',
+                        },                        
                 } } }
             |
                 # :foo 
@@ -480,9 +644,16 @@ sub recompile {
                 <Pugs::Grammar::Term.cpan_bareword> 
                 { return { cpan_bareword => $/{'Pugs::Grammar::Term.cpan_bareword'}->() } }
             |
-                ### Test::More
+                ### Test => ... - autoquote before '=>'
                 <Pugs::Grammar::Term.bare_ident> 
+                [
+                    <before <?ws>? \=\> >
+                    { return { single_quoted => $/{'Pugs::Grammar::Term.bare_ident'}->() } } 
+                
+                |
+                ### Test::More
                 { return { bareword => $/{'Pugs::Grammar::Term.bare_ident'}->() } }
+                ]
             ^ ),
         );
         

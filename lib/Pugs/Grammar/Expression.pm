@@ -1,5 +1,6 @@
 package Pugs::Grammar::Expression;
 
+use utf8;
 use strict;
 use warnings;
 
@@ -100,6 +101,7 @@ sub ast {
         yylex => sub {
             my ( $label, $node );
             ( $label, $node, $pos ) = lexer( $match, $pos, $rx_end );
+            #print "Expression: at $pos\n";
             ( $label, $node );
         },
         yyerror => sub { 
@@ -119,7 +121,7 @@ sub ast {
         }; 
     }
 
-    #print Dumper $out;
+    #print "Expression: ", Dumper( $out );
     # $reentrant--;
     return ( $out, $pos );
 }
@@ -127,6 +129,7 @@ sub ast {
 sub lexer {
     my ( $match, $pos, $rx_end ) = @_;
 
+        #print "Lexer: start\n";
         #print "Grammar::Expression::ast::lex '$match' \n";
         if ( substr( $match, $pos ) =~ /$rx_end/  
            || (  !$allow_semicolon
@@ -187,20 +190,37 @@ sub lexer {
                 if $statement_modifier;
         }
 
+        #print "Lexer: try <Operator|Term|Quote>\n";
+
         my $m1 = Pugs::Grammar::Operator->parse( $match, { p => $pos } );
+        #print "Lexer: Operator done\n";
         my $m2;
         if ( $expect_term ) {
             $m2 = Pugs::Grammar::Term->parse( $match, { p => $pos } );
+            #print "Lexer: Term done\n";
             $m2 = Pugs::Grammar::Quote->parse( $match, { p => $pos } )
                 unless $m2;
         }
-        #print "m1 = " . Dumper($m1) . "m2 = " . Dumper($m2);
+        #print "Lexer: m1 = " . Dumper($m1) . "m2 = " . Dumper($m2);
 
         my $pos2;
         while(1) {
             $pos2 = $m2->to if $m2;
+            # term.>>meth() 
+            if ( $m2 && $m2->tail && $m2->tail =~ /^(\.(?:>>|»)\.?|(?:>>|»)\.)/ ) {
+                my $meth = Pugs::Grammar::Term->parse( $match, { p => $pos2 + length($1) } );
+                $meth->data->{capture} = \{ 
+                    op1  => 'method_call_hyper', 
+                    hyper => 1,
+                    self => $m2->(), 
+                    method => $meth->(),
+                    param => undef,
+                };
+                $m2 = $meth;
+                next;
+            }
             # term.meth() 
-            if ( $m2 && $m2->tail && $m2->tail =~ /^\.[^.]/ ) {
+            if ( $m2 && $m2->tail && $m2->tail =~ /^\.[^.([{<«]/ ) {
                 my $meth = Pugs::Grammar::Term->parse( $match, { p => $pos2 } );
                 $meth->data->{capture} = \{ 
                     op1  => 'method_call', 
@@ -211,8 +231,12 @@ sub lexer {
                 $m2 = $meth;
                 next;
             }
+            # term.() 
+            if ( $m2 && $m2->tail && $m2->tail =~ /^\.[([{<«]/ ) {
+                $pos2++;
+            }
             # term() 
-            if ( $m2 && $m2->tail && $m2->tail =~ /^\(/ ) {
+            if ( $m2 && $m2->tail && $m2->tail =~ /^\.?\(/ ) {
                 my $paren = Pugs::Grammar::Term->parse( $match, { p => $pos2 } );
                 #print "paren: ",Dumper($paren);
                 if ( exists $m2->()->{dot_bareword} ) {
@@ -243,7 +267,7 @@ sub lexer {
                 next;
             }
             # term[] 
-            if ( $m2 && $m2->tail && $m2->tail =~ /^\[/ ) {
+            if ( $m2 && $m2->tail && $m2->tail =~ /^\.?\[/ ) {
                 my $paren = Pugs::Grammar::Term->parse( $match, { p => $pos2 } );
                 if ( exists $m2->()->{dot_bareword} ) {
                     $paren->data->{capture} = \{ 
@@ -266,8 +290,8 @@ sub lexer {
                 else {
                     $paren->data->{capture} = \{ 
                         fixity => 'postcircumfix', 
-                        op1 => { op => "[" }, 
-                        op2 => { op => "]" }, 
+                        op1 => "[", 
+                        op2 => "]", 
                         exp1 => $m2->(), 
                         exp2 => $paren->()->{exp1}, 
                     };
@@ -276,7 +300,7 @@ sub lexer {
                 next;
             }
             # term{} 
-            if ( $m2 && $m2->tail && $m2->tail =~ /^\{/ ) {
+            if ( $m2 && $m2->tail && $m2->tail =~ /^\.?\{/ ) {
                 my $paren = Pugs::Grammar::Term->parse( $match, { p => $pos2 } );
                 if ( exists $m2->()->{dot_bareword} ) {
                     $paren->data->{capture} = \{ 
@@ -297,20 +321,33 @@ sub lexer {
                     };
                 }
                 else {
-                    $paren->data->{capture} = \{ 
-                        fixity => 'postcircumfix', 
-                        op1 => { op => "{" }, 
-                        op2 => { op => "}" }, 
-                        exp1 => $m2->(), 
-                        exp2 => $paren->()->{'bare_block'}, 
-                    };
+                    my $block = $paren->()->{'bare_block'};
+                    if ( @{ $block->{'statements'} } < 2 ) {
+                        $paren->data->{capture} = \{ 
+                            fixity => 'postcircumfix', 
+                            op1 => "{", 
+                            op2 => "}", 
+                            exp1 => $m2->(), 
+                            exp2 => $block->{'statements'}[0], 
+                        };
+                    }
+                    else {
+                        # multidim
+                        $paren->data->{capture} = \{ 
+                            fixity => 'postcircumfix', 
+                            op1 => "{", 
+                            op2 => "}", 
+                            exp1 => $m2->(), 
+                            exp2 => $block, 
+                        };
+                    }
                 }
                 $m2 = $paren;
                 next;
             }
             # term<> 
             if ( $m2 && $m2->tail 
-                && $m2->tail =~ /^[<�]/ ) {
+                && $m2->tail =~ /^\.?[<«]/ ) {
                 # XXX - is '<' a quote?
                 my $paren = Pugs::Grammar::Quote->parse( $match, { p => $pos2 } );
                 if ( exists $m2->()->{dot_bareword} ) {
@@ -334,8 +371,8 @@ sub lexer {
                 else {
                     $paren->data->{capture} = \{ 
                         fixity => 'postcircumfix', 
-                        op1 => { op => "<" }, 
-                        op2 => { op => ">" }, 
+                        op1 => "{", 
+                        op2 => "}", 
                         exp1 => $m2->(), 
                         exp2 => $paren->(), 
                     };
@@ -361,7 +398,7 @@ sub lexer {
             $m = $m2 if $m2;
         }
         return ('','', $pos) unless ref $m;
-        #print "Term or expression: ",Dumper( $m->() );
+        #print "Lexer: Term or expression: ",Dumper( $m->() );
 
 # <fglock> like: ( name 1, 2 or 3 ) - is it parsed as name(1,2 or 3) or (name(1,2) or 3)
 # <TimToady> it will be taken provisionally as a listop, with listop precedence
@@ -382,7 +419,7 @@ sub lexer {
                 $t = [ 'REDUCE' => $ast ]
             }
             else {
-                $t = [ $ast->{op} => $ast ];
+                $t = [ $ast->{op} => $ast->{op} ];
             }
         }
         elsif ( exists $ast->{bareword} ) {
@@ -394,7 +431,7 @@ sub lexer {
         else {
             $t = [ 'NUM' => $ast ]
         }
-        #warn "Term: ",Dumper($t), "MATCH $match\n";
+        #print "Term: ",Dumper($t); #, "MATCH $match\n";
         $t=['',''] unless $ast;  #$match; # defined($t);
 
         #print "expect NUM \n" if grep { $_ eq 'NUM' } @expect;
